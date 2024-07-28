@@ -4,6 +4,15 @@
     <meta charset="UTF-8">
     <title>PyPI Packages</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        if (location.protocol === 'https:') {
+            const t = parseInt(location.search.slice(1)) || 0;
+            const n = new Date().getTime();
+            if (n - t > 60 * 5 * 1000) {
+                location.href = location.pathname + '?' + n;
+            }
+        }
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
 <!--    <script src="https://cdn.jsdelivr.net/npm/vue@3"></script>-->
 </HEAD>
