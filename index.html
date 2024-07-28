@@ -29,7 +29,7 @@
         <div class="lg:flex lg:flex-row">
 
         <div class="lg:basis-1/6 lg:mr-4">
-            <input type="text" v-model="packageName" @input="fetchSuggestions" placeholder="Enter package name" @keyup.enter="fetchMetadata" class="placeholder-gray-400 bg-indigo-900 rounded-md shadow-sm p-2">
+            <input type="text" autofocus v-model="packageName" @input="fetchSuggestions" placeholder="Enter package name" @keyup.enter="fetchMetadata" class="placeholder-gray-400 bg-indigo-900 rounded-md shadow-sm p-2">
             <ul v-if="suggestions.length">
                 <li v-for="suggestion in suggestions" :key="suggestion" @click="selectPackage(suggestion)" class="hover:bg-indigo-900 hover:text-gray-100 text-gray-500 opacity-50 cursor-pointer p-1 pl-2">{{ suggestion }}</li>
             </ul>
