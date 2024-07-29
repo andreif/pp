@@ -54,7 +54,7 @@
             </div>
 
             <p v-if="metadata.info.description" class="pt-10 pb-2"><strong>Description:</strong></p>
-            <pre class="text-xs opacity-50">{{ metadata.info.description }}</pre>
+            <pre class="text-xs opacity-50 whitespace-pre-wrap">{{ metadata.info.description }}</pre>
         </div>
         <div v-if="error">{{ error }}</div>
     </div>
