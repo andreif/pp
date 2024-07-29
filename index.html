@@ -119,6 +119,7 @@
 
                 Vue.onMounted(async () => {
                     await fetchAllPackages();
+                    pushHistory();
                     window.addEventListener('popstate', handlePopState);
                 });
                 Vue.onUnmounted(() => {
