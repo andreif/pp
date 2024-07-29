@@ -29,11 +29,10 @@
         <div class="lg:flex lg:flex-row">
 
         <div class="lg:basis-1/6 lg:mr-4">
-            <input type="text" autofocus v-model="packageName" @input="debouncedFetchSuggestions" placeholder="Enter package name" @keyup.enter="search" class="placeholder-gray-400 bg-indigo-900 rounded-md shadow-sm p-2">
+            <input type="text" autofocus v-model="packageName" @input="debouncedFetchSuggestions" placeholder="Enter package name" @keyup.enter="search(packageName)" class="placeholder-gray-400 bg-indigo-900 rounded-md shadow-sm p-2">
             <ul v-if="suggestions.length">
                 <li v-for="(x, index) in suggestions" :key="index" @click="selectSuggested(x)" class="hover:bg-indigo-900 hover:text-gray-100 text-gray-500 opacity-50 cursor-pointer p-1 pl-2">{{ x }}</li>
             </ul>
-<!--        <button @click="fetchMetadata" class="bg-orange-500">Fetch Metadata</button>-->
         </div>
         <div v-if="metadata" class="col-span-2 max-w-screen-lg">
             <ul class="pb-2">
@@ -74,11 +73,10 @@
     </script>
 
     <script type="module">
-        import { createApp, ref, onMounted, computed } from 'vue';
+        import * as Vue from 'vue';
 
         const Dependency = {
             template: '#dependency',
-
             props: {
                 text: {
                     type: String,
@@ -87,7 +85,7 @@
             },
             emits: ['select-package'],
             setup(props, { emit }) {
-                const parsed = computed(() => {
+                const parsed = Vue.computed(() => {
                     // const s = props.text.search(/^([^!\[~;<=> ]+)([^;]*)(.*)$/);
                     // console.log(s)
                     const parts = props.text.split(/([!\[~;<=> ].*)/);
@@ -111,16 +109,20 @@
         const PypiMetadataViewer = {
             template: '#meta',
             setup() {
-                const packageName = ref('');
-                const metadata = ref(null);
-                const error = ref(null);
-                const breadcrumbs = ref([]);
-                const suggestions = ref([]);
-                const allPackages = ref([]);
+                const packageName = Vue.ref('');
+                const metadata = Vue.ref(null);
+                const error = Vue.ref(null);
+                const breadcrumbs = Vue.ref([]);
+                const suggestions = Vue.ref([]);
+                const allPackages = Vue.ref([]);
                 let timeout = null;
 
-                onMounted(async () => {
+                Vue.onMounted(async () => {
                     await fetchAllPackages();
+                    window.addEventListener('popstate', handlePopState);
+                });
+                Vue.onUnmounted(() => {
+                    window.removeEventListener('popstate', handlePopState);
                 });
 
                 const fetchAllPackages = async () => {
@@ -137,13 +139,12 @@
                     }
                 };
 
-                const fetchMetadata = async () => {
-                    breadcrumbs.value.push(packageName.value);
+                const fetchMetadata = async (name) => {
                     error.value = null;
                     metadata.value = null;
-                    if (packageName.value) {
+                    if (name) {
                         try {
-                            const response = await fetch(`https://pypi.org/pypi/${packageName.value}/json`);
+                            const response = await fetch(`https://pypi.org/pypi/${name}/json`);
                             if (!response.ok) {
                                 throw new Error('Package not found');
                             }
@@ -184,10 +185,16 @@
                     }, 200);
                 };
 
+                const pushHistory = () => {
+                    history.pushState({ breadcrumbs: breadcrumbs.value.map(pkg => pkg) }, '');
+                }
+
                 const selectPackage = (pkg) => {
                     packageName.value = pkg;
                     suggestions.value = [];
-                    fetchMetadata();
+                    breadcrumbs.value.push(pkg);
+                    pushHistory();
+                    fetchMetadata(pkg);
                 };
 
                 const selectSuggested = (pkg) => {
@@ -195,17 +202,28 @@
                     selectPackage(pkg);
                 };
 
-                const search = () => {
+                const search = (pkg) => {
                     breadcrumbs.value = [];
                     suggestions.value = [];
-                    fetchMetadata();
+                    breadcrumbs.value.push(pkg);
+                    pushHistory();
+                    fetchMetadata(pkg);
                 }
 
-                const backTo = (x) => {
-                    while (breadcrumbs.value.length > 0 && breadcrumbs.value.pop() !== x) {}
-                    packageName.value = x;
-                    fetchMetadata();
+                const backTo = (pkg) => {
+                    while (breadcrumbs.value.length > 0 && breadcrumbs.value.pop() !== pkg) {}
+                    packageName.value = pkg;
+                    breadcrumbs.value.push(pkg);
+                    pushHistory();
+                    fetchMetadata(pkg);
                 }
+
+                const handlePopState = (event) => {
+                    const b = event.state.breadcrumbs;
+                    breadcrumbs.value = b;
+                    packageName.value = b && b.length > 0 ? b[b.length - 1] : '';
+                    fetchMetadata(packageName.value);
+                };
 
                 return {
                     packageName,
@@ -225,7 +243,7 @@
             }
         };
 
-        createApp({
+        Vue.createApp({
             components: {
                 PypiMetadataViewer
             }
