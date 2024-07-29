@@ -25,33 +25,81 @@
     }}</script>
 
     <script type="text/x-template" id="meta">
-        <h1 class="text-4xl mb-4">PyPI Packages</h1>
+        <h1 class="text-4xl pb-10">PyPI Packages</h1>
         <div class="lg:flex lg:flex-row">
 
         <div class="lg:basis-1/6 lg:mr-4">
-            <input type="text" autofocus v-model="packageName" @input="debouncedFetchSuggestions" placeholder="Enter package name" @keyup.enter="fetchMetadata" class="placeholder-gray-400 bg-indigo-900 rounded-md shadow-sm p-2">
+            <input type="text" autofocus v-model="packageName" @input="debouncedFetchSuggestions" placeholder="Enter package name" @keyup.enter="search" class="placeholder-gray-400 bg-indigo-900 rounded-md shadow-sm p-2">
             <ul v-if="suggestions.length">
                 <li v-for="suggestion in suggestions" :key="suggestion" @click="selectPackage(suggestion)" class="hover:bg-indigo-900 hover:text-gray-100 text-gray-500 opacity-50 cursor-pointer p-1 pl-2">{{ suggestion }}</li>
             </ul>
 <!--        <button @click="fetchMetadata" class="bg-orange-500">Fetch Metadata</button>-->
         </div>
-        <div v-if="metadata" class="col-span-2">
-            <h2 class="text-2xl mb-2"><a :href="metadata.info.package_url" target="_blank" class="text-3xl text-indigo-300 font-bold">{{ metadata.info.name }}</a> {{ metadata.info.version }}</h2>
-            <p v-if="metadata.info.summary"><strong>Summary:</strong> {{ metadata.info.summary }}</p>
+        <div v-if="metadata" class="col-span-2 max-w-screen-lg">
+            <ul class="pb-2">
+                <li v-for="(x, index) in breadcrumbs" :key="index" @click="backTo(x)" class="pr-2 cursor-pointer text-indigo-300 last:hidden">💥 {{ x }}</li>
+            </ul>
+            <h2 class="text-2xl mb-2"><a :href="metadata.info.package_url" target="_blank" class="text-3xl text-indigo-300 font-bold">📦 {{ metadata.info.name }}</a> {{ metadata.info.version }}</h2>
+            <p v-if="metadata.info.summary" class="italic py-2">{{ metadata.info.summary }}</p>
+            <p v-if="metadata.info.home_page" class="pb-4"><a :href="metadata.info.home_page" target="_blank" class="text-indigo-300">{{ metadata.info.home_page }}</a></p>
             <p v-if="metadata.info.author"><strong>Author:</strong> {{ metadata.info.author }}</p>
             <p v-if="metadata.info.license"><strong>License:</strong> {{ metadata.info.license }}</p>
-            <div class="pt-2"><strong>Dependencies:</strong>
+
+            <div v-if="metadata.info.requires_dist" class="pt-2"><strong>Dependencies:</strong>
                 <ul v-if="metadata.info.requires_dist">
-                    <li v-for="x in metadata.info.requires_dist" :key="x" @click="" class="">- {{ x }}</li>
+                    <li v-for="(x, index) in metadata.info.requires_dist" :key="index" class="py-2">
+                        <dependency :text="x" @select-package="selectPackage"></dependency>
+                    </li>
                 </ul>
             </div>
+
+            <p v-if="metadata.info.description" class="pt-10 pb-2"><strong>Description:</strong></p>
+            <pre class="text-xs opacity-50">{{ metadata.info.description }}</pre>
         </div>
         <div v-if="error">{{ error }}</div>
     </div>
     </script>
 
+    <script type="text/x-template" id="dependency">
+        <span class="pl-1 pr-3">💣</span>
+        <div @click="selectPackage(parsed.name)" class="cursor-pointer text-indigo-300 hover:text-indigo-200 inline min-w-20">{{ parsed.name }}</div>
+        <span class="opacity-50">{{ parsed.version }}</span>
+    </script>
+
     <script type="module">
-        import { createApp, ref, onMounted } from 'vue';
+        import { createApp, ref, onMounted, computed } from 'vue';
+
+        const Dependency = {
+            template: '#dependency',
+
+            props: {
+                text: {
+                    type: String,
+                    required: true
+                }
+            },
+            emits: ['select-package'],
+            setup(props, { emit }) {
+                const parsed = computed(() => {
+                    // const s = props.text.search(/^([^!\[~;<=> ]+)([^;]*)(.*)$/);
+                    // console.log(s)
+                    const parts = props.text.split(/([!\[~;<=> ].*)/);
+                    return {
+                        name: parts[0],
+                        version: parts[1],
+                    }
+                });
+
+                const selectPackage = (name) => {
+                    emit('select-package', name);
+                }
+
+                return {
+                    parsed,
+                    selectPackage,
+                };
+            },
+        };
 
         const PypiMetadataViewer = {
             template: '#meta',
@@ -59,6 +107,7 @@
                 const packageName = ref('');
                 const metadata = ref(null);
                 const error = ref(null);
+                const breadcrumbs = ref([]);
                 const suggestions = ref([]);
                 const allPackages = ref([]);
                 let timeout = null;
@@ -82,6 +131,7 @@
                 };
 
                 const fetchMetadata = async () => {
+                    breadcrumbs.value.push(packageName.value);
                     error.value = null;
                     metadata.value = null;
                     if (packageName.value) {
@@ -133,21 +183,37 @@
                     fetchMetadata();
                 };
 
+                const search = () => {
+                    breadcrumbs.value = [];
+                    fetchMetadata();
+                }
+
+                const backTo = (x) => {
+                    while (breadcrumbs.value.length > 0 && breadcrumbs.value.pop() !== x) {}
+                    packageName.value = x;
+                    fetchMetadata();
+                }
+
                 return {
                     packageName,
                     metadata,
                     error,
                     suggestions,
+                    breadcrumbs,
+                    backTo,
                     debouncedFetchSuggestions,
-                    fetchMetadata,
+                    search,
                     selectPackage
                 };
+            },
+            components: {
+                Dependency
             }
         };
 
         createApp({
             components: {
-                'pypi-metadata-viewer': PypiMetadataViewer
+                PypiMetadataViewer
             }
         }).mount('#app');
     </script>
