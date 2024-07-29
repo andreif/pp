@@ -45,11 +45,11 @@
 <!--{{ metadata.info }}-->
             <div class="pt-2"><strong>Dependencies:</strong>
                 <ul v-if="metadata.info.requires_dist">
-                    <li v-for="(x, index) in metadata.info.requires_dist" :key="index" class="py-2">
+                    <li v-for="(x, index) in metadata.info.requires_dist" :key="index" class="pt-2">
                         <dependency :text="x" @select-package="selectPackage"></dependency>
                     </li>
                 </ul>
-                <span v-else class="pl-1">🌱 No</span>
+                <span v-else class="pl-1">No 🌱</span>
             </div>
 
             <div v-if="metadata.info.description">
