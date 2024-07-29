@@ -31,7 +31,7 @@
         <div class="lg:basis-1/6 lg:mr-4">
             <input type="text" autofocus v-model="packageName" @input="debouncedFetchSuggestions" placeholder="Enter package name" @keyup.enter="search" class="placeholder-gray-400 bg-indigo-900 rounded-md shadow-sm p-2">
             <ul v-if="suggestions.length">
-                <li v-for="suggestion in suggestions" :key="suggestion" @click="selectPackage(suggestion)" class="hover:bg-indigo-900 hover:text-gray-100 text-gray-500 opacity-50 cursor-pointer p-1 pl-2">{{ suggestion }}</li>
+                <li v-for="(x, index) in suggestions" :key="index" @click="selectSuggested(x)" class="hover:bg-indigo-900 hover:text-gray-100 text-gray-500 opacity-50 cursor-pointer p-1 pl-2">{{ x }}</li>
             </ul>
 <!--        <button @click="fetchMetadata" class="bg-orange-500">Fetch Metadata</button>-->
         </div>
@@ -184,6 +184,11 @@
                     fetchMetadata();
                 };
 
+                const selectSuggested = (pkg) => {
+                    breadcrumbs.value = [];
+                    selectPackage(pkg);
+                };
+
                 const search = () => {
                     breadcrumbs.value = [];
                     suggestions.value = [];
@@ -205,6 +210,7 @@
                     backTo,
                     debouncedFetchSuggestions,
                     search,
+                    selectSuggested,
                     selectPackage
                 };
             },
