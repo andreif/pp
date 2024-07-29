@@ -29,7 +29,7 @@
         <div class="lg:flex lg:flex-row">
 
         <div class="lg:basis-1/6 lg:mr-4">
-            <input type="text" autofocus v-model="packageName" @input="fetchSuggestions" placeholder="Enter package name" @keyup.enter="fetchMetadata" class="placeholder-gray-400 bg-indigo-900 rounded-md shadow-sm p-2">
+            <input type="text" autofocus v-model="packageName" @input="debouncedFetchSuggestions" placeholder="Enter package name" @keyup.enter="fetchMetadata" class="placeholder-gray-400 bg-indigo-900 rounded-md shadow-sm p-2">
             <ul v-if="suggestions.length">
                 <li v-for="suggestion in suggestions" :key="suggestion" @click="selectPackage(suggestion)" class="hover:bg-indigo-900 hover:text-gray-100 text-gray-500 opacity-50 cursor-pointer p-1 pl-2">{{ suggestion }}</li>
             </ul>
@@ -61,6 +61,7 @@
                 const error = ref(null);
                 const suggestions = ref([]);
                 const allPackages = ref([]);
+                let timeout = null;
 
                 onMounted(async () => {
                     await fetchAllPackages();
@@ -73,7 +74,7 @@
                             const text = await response.text();
                             const parser = new DOMParser();
                             const doc = parser.parseFromString(text, 'text/html');
-                            allPackages.value = Array.from(doc.querySelectorAll('a')).map(link => link.textContent);
+                            allPackages.value = Array.from(doc.querySelectorAll('a')).map(link => [link.textContent.toLowerCase(), link.textContent]);
                         }
                     } catch (err) {
                         console.error('Error fetching all packages:', err);
@@ -97,15 +98,33 @@
                 };
 
                 const fetchSuggestions = () => {
-                    if (packageName.value.length > 1) {
+                    if (packageName.value.length > 2) {
                         const lowerCasePackageName = packageName.value.toLowerCase();
-                        const exactMatches = allPackages.value.filter(pkg => pkg.toLowerCase() === lowerCasePackageName);
-                        const startsWithMatches = allPackages.value.filter(pkg => pkg.toLowerCase().startsWith(lowerCasePackageName) && pkg.toLowerCase() !== lowerCasePackageName);
-                        const containsMatches = allPackages.value.filter(pkg => pkg.toLowerCase().includes(lowerCasePackageName) && !pkg.toLowerCase().startsWith(lowerCasePackageName));
+                        const exactMatches = [];
+                        const startsWithMatches = [];
+                        const containsMatches = [];
+
+                        for (const pkg of allPackages.value) {
+                            const lc = pkg[0];
+                            if (lowerCasePackageName === lc) {
+                                exactMatches.push(pkg[1]);
+                            } else if (lc.startsWith(lowerCasePackageName)) {
+                                startsWithMatches.push(pkg[1]);
+                            } else if (lc.includes(lowerCasePackageName)) {
+                                containsMatches.push(pkg[1]);
+                            }
+                        }
                         suggestions.value = [...exactMatches, ...startsWithMatches, ...containsMatches].slice(0, 20);
                     } else {
                         suggestions.value = [];
                     }
+                };
+
+                const debouncedFetchSuggestions = () => {
+                    clearTimeout(timeout);
+                    timeout = setTimeout(() => {
+                        fetchSuggestions();
+                    }, 200);
                 };
 
                 const selectPackage = (pkg) => {
@@ -119,7 +138,7 @@
                     metadata,
                     error,
                     suggestions,
-                    fetchSuggestions,
+                    debouncedFetchSuggestions,
                     fetchMetadata,
                     selectPackage
                 };
