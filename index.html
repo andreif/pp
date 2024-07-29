@@ -44,14 +44,14 @@
             <p v-if="metadata.info.home_page" class="pb-4"><a :href="metadata.info.home_page" target="_blank" class="text-indigo-300">{{ metadata.info.home_page }}</a></p>
             <p v-if="metadata.info.author"><strong>Author:</strong> {{ metadata.info.author }}</p>
 <!--{{ metadata.info }}-->
-            <div v-if="metadata.info.requires_dist" class="pt-2"><strong>Dependencies:</strong>
+            <div class="pt-2"><strong>Dependencies:</strong>
                 <ul v-if="metadata.info.requires_dist">
                     <li v-for="(x, index) in metadata.info.requires_dist" :key="index" class="py-2">
                         <dependency :text="x" @select-package="selectPackage"></dependency>
                     </li>
                 </ul>
+                <span v-else class="pl-1">🌱 No</span>
             </div>
-            <div v-else class="pt-4">🌱 No dependencies</div>
 
             <div v-if="metadata.info.description">
                 <p class="pt-10 pb-2"><strong>Description:</strong></p>
