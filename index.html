@@ -44,11 +44,16 @@
             <p v-if="metadata.info.author"><strong>Author:</strong> {{ metadata.info.author }}</p>
 <!--{{ metadata.info }}-->
             <div class="pt-2"><strong>Dependencies:</strong>
-                <ul v-if="metadata.info.requires_dist">
-                    <li v-for="(x, index) in metadata.info.requires_dist" :key="index" class="pt-2">
-                        <dependency :text="x" @select-package="selectPackage"></dependency>
-                    </li>
-                </ul>
+                <template v-if="groupedDeps">
+                    <div v-for="([group, deps]) in groupedDeps" :key="group" class="mt-2">
+                        <p v-if="group" class="pt-3 text-xs font-semibold tracking-wider text-indigo-400">[{{ group }}]</p>
+                        <ul>
+                            <li v-for="(x, index) in deps" :key="index" class="pt-2">
+                                <dependency :text="x" @select-package="selectPackage"></dependency>
+                            </li>
+                        </ul>
+                    </div>
+                </template>
                 <span v-else class="pl-1">No 🌱</span>
             </div>
 
@@ -86,12 +91,17 @@
             emits: ['select-package'],
             setup(props, { emit }) {
                 const parsed = Vue.computed(() => {
-                    // const s = props.text.search(/^([^!\[~;<=> ]+)([^;]*)(.*)$/);
-                    // console.log(s)
                     const parts = props.text.split(/([!\[~;<=> ].*)/);
+                    let version = parts[1] || '';
+                    version = version
+                        .replace(/\s+and\s+extra\s*==\s*["'][^"']*["']/gi, '')
+                        .replace(/extra\s*==\s*["'][^"']*["']\s+and\s+/gi, '')
+                        .replace(/;\s*extra\s*==\s*["'][^"']*["']/gi, '')
+                        .replace(/;\s*$/, '')
+                        .trim();
                     return {
                         name: parts[0],
-                        version: parts[1],
+                        version,
                     }
                 });
 
@@ -119,6 +129,12 @@
 
                 Vue.onMounted(async () => {
                     await fetchAllPackages();
+                    const hash = decodeURIComponent(location.hash.slice(1));
+                    if (hash) {
+                        packageName.value = hash;
+                        breadcrumbs.value = [hash];
+                        fetchMetadata(hash);
+                    }
                     pushHistory();
                     window.addEventListener('popstate', handlePopState);
                 });
@@ -187,7 +203,10 @@
                 };
 
                 const pushHistory = () => {
-                    history.pushState({ breadcrumbs: breadcrumbs.value.map(pkg => pkg) }, '');
+                    const crumbs = breadcrumbs.value;
+                    const current = crumbs.length > 0 ? crumbs[crumbs.length - 1] : '';
+                    const url = current ? '#' + current : location.pathname + location.search;
+                    history.pushState({ breadcrumbs: crumbs.map(pkg => pkg) }, '', url);
                 }
 
                 const selectPackage = (pkg) => {
@@ -211,6 +230,21 @@
                     fetchMetadata(pkg);
                 }
 
+                const groupedDeps = Vue.computed(() => {
+                    if (!metadata.value?.info?.requires_dist) return null;
+                    const map = {};
+                    for (const dep of metadata.value.info.requires_dist) {
+                        const m = dep.match(/extra\s*==\s*["']([^"']+)["']/);
+                        const key = m ? m[1] : '';
+                        (map[key] ??= []).push(dep);
+                    }
+                    return Object.entries(map).sort(([a], [b]) => {
+                        if (a === '') return -1;
+                        if (b === '') return 1;
+                        return a.localeCompare(b);
+                    });
+                });
+
                 const backTo = (pkg) => {
                     while (breadcrumbs.value.length > 0 && breadcrumbs.value.pop() !== pkg) {}
                     packageName.value = pkg;
@@ -232,6 +266,7 @@
                     error,
                     suggestions,
                     breadcrumbs,
+                    groupedDeps,
                     backTo,
                     debouncedFetchSuggestions,
                     search,
