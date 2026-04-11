@@ -126,14 +126,22 @@
                     <div v-for="g in rootGroupsFiltered" :key="g.label" class="mb-6">
                     <h3 class="text-sm font-medium text-sky-200/90 mb-2">{{ g.label }}</h3>
                     <div class="overflow-x-auto rounded-lg border border-slate-700/80">
-                        <table class="w-full min-w-[72rem] text-sm border-collapse">
+                        <table class="w-full min-w-[80rem] text-sm border-collapse">
                             <thead>
                                 <tr class="border-b border-slate-700/80 bg-slate-900/60 text-left text-xs text-gray-500 uppercase tracking-wide">
-                                    <th class="px-3 py-2 font-medium">Roots</th>
+                                    <th class="px-3 py-2 text-xs font-medium">Roots</th>
                                     <th class="px-3 py-2 font-medium">Package</th>
                                     <th class="px-3 py-2 font-medium">Specifier</th>
                                     <th class="px-3 py-2 font-medium">Manifest constraints</th>
                                     <th class="px-3 py-2 font-medium">Resolved</th>
+                                    <th
+                                        class="px-3 py-2 font-medium"
+                                        title="Count of this package's direct dependencies in the lockfile graph"
+                                    >Direct</th>
+                                    <th
+                                        class="px-3 py-2 font-medium"
+                                        title="Total downstream dependencies in the lockfile graph (direct + all transitive)"
+                                    >Total</th>
                                     <th class="px-3 py-2 font-medium">Vulnerabilities</th>
                                 </tr>
                             </thead>
@@ -143,12 +151,12 @@
                                     :key="row.key"
                                     class="border-b border-slate-800/80 hover:bg-slate-900/40"
                                 >
-                                    <td class="px-3 py-2 align-top">
-                                        <div class="flex flex-wrap gap-1.5">
+                                    <td class="px-3 py-2 align-top text-xs">
+                                        <div class="flex flex-wrap gap-1 py-1">
                                             <span
                                                 v-for="(wr, i) in row.workspaceRoots"
                                                 :key="i"
-                                                class="cursor-default text-xl leading-none select-none"
+                                                class="cursor-default text-sm leading-none select-none"
                                                 :title="wr.workspace + ' - ' + wr.rootTitle"
                                                 role="img"
                                                 :aria-label="wr.workspace + ' ' + wr.rootTitle"
@@ -165,31 +173,89 @@
                                         >workspace</span>
                                         <span v-if="row.markerShort" class="text-gray-500 text-xs block mt-0.5">{{ row.markerShort }}</span>
                                     </td>
-                                    <td class="px-3 py-2 font-mono text-gray-300/95 align-top whitespace-pre-wrap break-words">{{ row.specifier || '-' }}</td>
-                                    <td
-                                        class="px-3 py-2 font-mono align-top whitespace-pre-wrap break-words"
-                                        :class="row.manifestConstraints ? 'text-amber-200/85' : 'text-gray-300/95'"
-                                    >{{ row.manifestConstraints || '-' }}</td>
+                                    <td class="px-3 py-2 font-mono align-top whitespace-pre-wrap break-words">
+                                        <span v-if="row.specifier" class="text-gray-300/95">{{ row.specifier }}</span>
+                                        <span v-else class="text-gray-600">-</span>
+                                    </td>
+                                    <td class="px-3 py-2 font-mono align-top whitespace-pre-wrap break-words">
+                                        <span v-if="row.manifestConstraints" class="text-amber-200/85">{{ row.manifestConstraints }}</span>
+                                        <span v-else class="text-gray-600">-</span>
+                                    </td>
                                     <td class="px-3 py-2 font-mono align-top">
                                         <span v-if="row.resolved">{{ row.resolved }}</span>
                                         <span v-else class="text-amber-400/90">unresolved</span>
                                         <span v-if="row.ambiguous" class="text-gray-500 text-xs ml-1" title="Multiple versions in lock; highest semver chosen">*</span>
+                                    </td>
+                                    <td class="px-3 py-2 align-top font-mono tabular-nums">
+                                        <span v-if="row.directDepCount != null && row.directDepCount !== 0" class="text-gray-300/95">{{ row.directDepCount }}</span>
+                                        <span v-else class="text-gray-600">-</span>
+                                    </td>
+                                    <td class="px-3 py-2 align-top font-mono tabular-nums">
+                                        <span v-if="row.subdepCount != null && row.subdepCount !== 0" class="text-gray-300/95">{{ row.subdepCount }}</span>
+                                        <span v-else class="text-gray-600">-</span>
                                     </td>
                                     <td class="px-3 py-2 align-top text-xs">
                                         <template v-if="row.osvEligible">
                                             <span v-if="osvScanning" class="text-sky-400/90">...</span>
                                             <span v-else-if="osvScanError" class="text-gray-600">-</span>
                                             <template v-else-if="vulnIdsForRow(row)?.length">
-                                                <span :class="vulnSeverityClass(vulnMaxForRow(row))" class="font-mono break-all">
-                                                    {{ vulnIdsForRow(row).join(', ') }}
-                                                </span>
-                                                <span
-                                                    v-if="vulnMaxForRow(row) != null"
-                                                    class="text-gray-500 block mt-0.5"
-                                                >
-                                                    max severity ~{{ vulnMaxForRow(row).toFixed(1) }}/10
-                                                </span>
-                                                <span v-if="rowMentionsCve(row)" class="text-gray-400 block mt-0.5">includes CVE</span>
+                                                <div class="space-y-1.5 font-mono break-all">
+                                                    <div
+                                                        v-for="g in vulnAdvisoryGroupsForRow(row)"
+                                                        :key="row.key + '-adv-' + g.vid"
+                                                        class="flex flex-wrap items-baseline"
+                                                    >
+                                                        <a
+                                                            v-if="cveNvdUrl(g.vid)"
+                                                            :href="cveNvdUrl(g.vid)"
+                                                            :title="vulnScoreTitleForVulnId(g.vid)"
+                                                            :class="vulnSeverityClass(vulnScoreForVulnId(g.vid))"
+                                                            class="underline decoration-slate-500/50 hover:brightness-110"
+                                                            target="_blank"
+                                                            rel="noopener"
+                                                        >{{ g.vid }}</a>
+                                                        <a
+                                                            v-else-if="ghsaAdvisoryUrl(g.vid)"
+                                                            :href="ghsaAdvisoryUrl(g.vid)"
+                                                            :title="vulnScoreTitleForVulnId(g.vid)"
+                                                            :class="vulnSeverityClass(vulnScoreForVulnId(g.vid))"
+                                                            class="underline decoration-slate-500/50 hover:brightness-110"
+                                                            target="_blank"
+                                                            rel="noopener"
+                                                        >{{ g.vid }}</a>
+                                                        <span
+                                                            v-else
+                                                            :title="vulnScoreTitleForVulnId(g.vid)"
+                                                            :class="vulnSeverityClass(vulnScoreForVulnId(g.vid))"
+                                                        >{{ g.vid }}</span>
+                                                        <template v-if="g.cves.length">
+                                                            <span class="text-gray-500">, </span>
+                                                            <template v-for="(cve, ci) in g.cves" :key="g.vid + cve">
+                                                                <span v-if="ci > 0" class="text-gray-500">, </span>
+                                                                <a
+                                                                    :href="cveNvdUrl(cve)"
+                                                                    title="NVD"
+                                                                    :class="vulnSeverityClass(vulnScoreForVulnId(g.vid))"
+                                                                    class="underline decoration-slate-500/50 hover:brightness-110"
+                                                                    target="_blank"
+                                                                    rel="noopener"
+                                                                >{{ cve }}</a>
+                                                            </template>
+                                                        </template>
+                                                        <template v-else-if="advisoryCveFallbackLine(row, g.vid)">
+                                                            <span class="text-gray-500">, </span>
+                                                            <span class="text-[11px] text-gray-500">includes CVE</span>
+                                                        </template>
+                                                        <span
+                                                            :class="vulnSeverityClass(vulnScoreForVulnId(g.vid))"
+                                                            class="ml-1 shrink-0 tabular-nums"
+                                                        >~{{ vulnScoreForVulnId(g.vid).toFixed(1) }}</span>
+                                                        <span
+                                                            v-if="g.patched.length"
+                                                            class="ml-1 text-gray-500"
+                                                        >{{ '>=' + g.patched.join(', ') }}</span>
+                                                    </div>
+                                                </div>
                                                 <a
                                                     :href="osvPyPIListUrl(row.name)"
                                                     class="text-sky-400/90 underline decoration-sky-500/40 hover:text-sky-300 mt-0.5 inline-block"
@@ -224,14 +290,22 @@
                     No transitive packages with a CVE ID (OSV) match this filter.
                 </p>
                 <div v-else class="overflow-x-auto rounded-lg border border-slate-700/80">
-                    <table class="w-full min-w-[72rem] text-sm border-collapse">
+                    <table class="w-full min-w-[80rem] text-sm border-collapse">
                         <thead>
                             <tr class="border-b border-slate-700/80 bg-slate-900/60 text-left text-xs text-gray-500 uppercase tracking-wide">
-                                <th class="px-3 py-2 font-medium">Roots</th>
+                                <th class="px-3 py-2 text-xs font-medium">Roots</th>
                                 <th class="px-3 py-2 font-medium">Package</th>
                                 <th class="px-3 py-2 font-medium">Specifier</th>
                                 <th class="px-3 py-2 font-medium">Manifest constraints</th>
                                 <th class="px-3 py-2 font-medium">Resolved</th>
+                                <th
+                                    class="px-3 py-2 font-medium"
+                                    title="Count of this package's direct dependencies in the lockfile graph"
+                                >Direct</th>
+                                <th
+                                    class="px-3 py-2 font-medium"
+                                    title="Total downstream dependencies in the lockfile graph (direct + all transitive)"
+                                >Total</th>
                                 <th class="px-3 py-2 font-medium">Needed by</th>
                                 <th class="px-3 py-2 font-medium">Vulnerabilities</th>
                             </tr>
@@ -242,14 +316,14 @@
                                 :key="row.key"
                                 class="border-b border-slate-800/80 hover:bg-slate-900/40"
                             >
-                                <td class="max-w-[16rem] px-3 py-2 align-top">
+                                <td class="max-w-[16rem] px-3 py-2 align-top text-xs">
                                     <div
-                                        class="flex flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden whitespace-nowrap leading-none [scrollbar-color:rgba(100,116,139,0.45)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-500/50"
+                                        class="flex flex-nowrap items-center gap-1 overflow-x-auto overflow-y-hidden whitespace-nowrap py-1 leading-none [scrollbar-color:rgba(100,116,139,0.45)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-500/50"
                                     >
                                         <span
                                             v-for="(wr, i) in row.workspaceRoots"
                                             :key="i"
-                                            class="inline-flex shrink-0 cursor-default select-none items-center text-xl leading-none"
+                                            class="inline-flex shrink-0 cursor-default select-none items-center text-sm leading-none"
                                             :title="wr.workspace + ' - ' + wr.rootTitle"
                                             role="img"
                                             :aria-label="wr.workspace + ' ' + wr.rootTitle"
@@ -264,28 +338,86 @@
                                         :title="row.localSourceLabel"
                                     >workspace</span>
                                 </td>
-                                <td class="px-3 py-2 font-mono text-gray-300/95 align-top whitespace-pre-wrap break-words">{{ row.specifier || '-' }}</td>
-                                <td
-                                    class="px-3 py-2 font-mono align-top whitespace-pre-wrap break-words"
-                                    :class="row.manifestConstraints ? 'text-amber-200/85' : 'text-gray-300/95'"
-                                >{{ row.manifestConstraints || '-' }}</td>
+                                <td class="px-3 py-2 font-mono align-top whitespace-pre-wrap break-words">
+                                    <span v-if="row.specifier" class="text-gray-300/95">{{ row.specifier }}</span>
+                                    <span v-else class="text-gray-600">-</span>
+                                </td>
+                                <td class="px-3 py-2 font-mono align-top whitespace-pre-wrap break-words">
+                                    <span v-if="row.manifestConstraints" class="text-amber-200/85">{{ row.manifestConstraints }}</span>
+                                    <span v-else class="text-gray-600">-</span>
+                                </td>
                                 <td class="px-3 py-2 font-mono text-gray-300/95 align-top">{{ row.packageVersion }}</td>
+                                <td class="px-3 py-2 align-top font-mono tabular-nums">
+                                    <span v-if="row.directDepCount != null && row.directDepCount !== 0" class="text-gray-300/95">{{ row.directDepCount }}</span>
+                                    <span v-else class="text-gray-600">-</span>
+                                </td>
+                                <td class="px-3 py-2 align-top font-mono tabular-nums">
+                                    <span v-if="row.subdepCount != null && row.subdepCount !== 0" class="text-gray-300/95">{{ row.subdepCount }}</span>
+                                    <span v-else class="text-gray-600">-</span>
+                                </td>
                                 <td class="px-3 py-2 font-mono text-gray-400/95 align-top whitespace-pre-wrap break-words">{{ row.neededBy }}</td>
                                 <td class="px-3 py-2 align-top text-xs">
                                     <template v-if="row.osvEligible">
                                         <span v-if="osvScanning" class="text-sky-400/90">...</span>
                                         <span v-else-if="osvScanError" class="text-gray-600">-</span>
                                         <template v-else-if="vulnIdsForRow(row)?.length">
-                                            <span :class="vulnSeverityClass(vulnMaxForRow(row))" class="font-mono break-all">
-                                                {{ vulnIdsForRow(row).join(', ') }}
-                                            </span>
-                                            <span
-                                                v-if="vulnMaxForRow(row) != null"
-                                                class="text-gray-500 block mt-0.5"
-                                            >
-                                                max severity ~{{ vulnMaxForRow(row).toFixed(1) }}/10
-                                            </span>
-                                            <span v-if="rowMentionsCve(row)" class="text-gray-400 block mt-0.5">includes CVE</span>
+                                            <div class="space-y-1.5 font-mono break-all">
+                                                <div
+                                                    v-for="g in vulnAdvisoryGroupsForRow(row)"
+                                                    :key="row.key + '-adv-' + g.vid"
+                                                    class="flex flex-wrap items-baseline"
+                                                >
+                                                    <a
+                                                        v-if="cveNvdUrl(g.vid)"
+                                                        :href="cveNvdUrl(g.vid)"
+                                                        :title="vulnScoreTitleForVulnId(g.vid)"
+                                                        :class="vulnSeverityClass(vulnScoreForVulnId(g.vid))"
+                                                        class="underline decoration-slate-500/50 hover:brightness-110"
+                                                        target="_blank"
+                                                        rel="noopener"
+                                                    >{{ g.vid }}</a>
+                                                    <a
+                                                        v-else-if="ghsaAdvisoryUrl(g.vid)"
+                                                        :href="ghsaAdvisoryUrl(g.vid)"
+                                                        :title="vulnScoreTitleForVulnId(g.vid)"
+                                                        :class="vulnSeverityClass(vulnScoreForVulnId(g.vid))"
+                                                        class="underline decoration-slate-500/50 hover:brightness-110"
+                                                        target="_blank"
+                                                        rel="noopener"
+                                                    >{{ g.vid }}</a>
+                                                    <span
+                                                        v-else
+                                                        :title="vulnScoreTitleForVulnId(g.vid)"
+                                                        :class="vulnSeverityClass(vulnScoreForVulnId(g.vid))"
+                                                    >{{ g.vid }}</span>
+                                                    <template v-if="g.cves.length">
+                                                        <span class="text-gray-500">, </span>
+                                                        <template v-for="(cve, ci) in g.cves" :key="g.vid + cve">
+                                                            <span v-if="ci > 0" class="text-gray-500">, </span>
+                                                            <a
+                                                                :href="cveNvdUrl(cve)"
+                                                                title="NVD"
+                                                                :class="vulnSeverityClass(vulnScoreForVulnId(g.vid))"
+                                                                class="underline decoration-slate-500/50 hover:brightness-110"
+                                                                target="_blank"
+                                                                rel="noopener"
+                                                            >{{ cve }}</a>
+                                                        </template>
+                                                    </template>
+                                                    <template v-else-if="advisoryCveFallbackLine(row, g.vid)">
+                                                        <span class="text-gray-500">, </span>
+                                                        <span class="text-[11px] text-gray-500">includes CVE</span>
+                                                    </template>
+                                                    <span
+                                                        :class="vulnSeverityClass(vulnScoreForVulnId(g.vid))"
+                                                        class="ml-1 shrink-0 tabular-nums"
+                                                    >~{{ vulnScoreForVulnId(g.vid).toFixed(1) }}</span>
+                                                    <span
+                                                        v-if="g.patched.length"
+                                                        class="ml-1 text-gray-500"
+                                                    >{{ '>=' + g.patched.join(', ') }}</span>
+                                                </div>
+                                            </div>
                                             <a
                                                 :href="osvPyPIListUrl(row.packageName)"
                                                 class="text-sky-400/90 underline decoration-sky-500/40 hover:text-sky-300 mt-0.5 inline-block"
@@ -450,6 +582,20 @@
             return seen;
         }
 
+        function buildDepCountsByPkgKey(allPackages) {
+            const forward = buildForwardChildKeys(allPackages);
+            const m = new Map();
+            for (const p of allPackages) {
+                const pk = pkgKey(p);
+                const reach = reachableFrom(pk, forward);
+                const direct = forward.get(pk) || [];
+                const directCount = direct.length;
+                const totalBelow = reach.size - 1;
+                m.set(pk, { directCount, subdepCount: totalBelow });
+            }
+            return m;
+        }
+
         function directDepKeysForRoot(root, allPackages) {
             const keys = new Set();
             for (const dep of root.dependencies || []) {
@@ -463,7 +609,7 @@
             return keys;
         }
 
-        function buildSubdependencyRows(allPackages, roots, manifestMap, byParentSpecs) {
+        function buildSubdependencyRows(allPackages, roots, manifestMap, byParentSpecs, depCountsByPkgKey) {
             if (!Array.isArray(roots) || !roots.length) return [];
             const forward = buildForwardChildKeys(allPackages);
             const reverse = buildReverseParents(forward);
@@ -533,6 +679,7 @@
                     agg.specifierParts.size > 0
                         ? [...agg.specifierParts].sort().join(', ')
                         : null;
+                const cnt = depCountsByPkgKey ? depCountsByPkgKey.get(agg.key) : null;
                 rows.push({
                     key: agg.key,
                     packageName: agg.packageName,
@@ -546,6 +693,8 @@
                     osvEligible: agg.osvEligible,
                     osvPkgId: agg.osvPkgId,
                     localSourceLabel: agg.localSourceLabel,
+                    directDepCount: cnt ? cnt.directCount : null,
+                    subdepCount: cnt ? cnt.subdepCount : null,
                 });
             }
             rows.sort((a, b) => {
@@ -566,6 +715,22 @@
         function osvPyPIListUrl(pkgName) {
             const q = encodeURIComponent(normPypiName(pkgName));
             return `https://osv.dev/list?ecosystem=PyPI&q=${q}`;
+        }
+
+        function cveNvdUrl(id) {
+            if (!id || typeof id !== 'string') return null;
+            const m = id.trim().match(/^CVE-\d{4}-\d+/i);
+            if (!m) return null;
+            const cve = m[0].toUpperCase();
+            return `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(cve)}`;
+        }
+
+        function ghsaAdvisoryUrl(id) {
+            if (!id || typeof id !== 'string') return null;
+            const m = id.trim().match(/^GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/i);
+            if (!m) return null;
+            const ghsa = m[0].toUpperCase();
+            return `https://github.com/advisories/${encodeURIComponent(ghsa)}`;
         }
 
         const OSV_UNKNOWN_SEVERITY_SCORE = 5;
@@ -660,11 +825,11 @@
         }
 
         function vulnSeverityClass(score) {
-            if (score == null) return 'text-red-200/95';
-            if (score >= 9) return 'text-red-300';
-            if (score >= 7) return 'text-orange-300';
-            if (score >= 4) return 'text-amber-300';
-            return 'text-yellow-200/85';
+            if (score == null) return 'text-zinc-400';
+            if (score >= 9) return 'text-rose-400 font-semibold';
+            if (score >= 7) return 'text-orange-400';
+            if (score >= 4) return 'text-amber-400';
+            return 'text-gray-400';
         }
 
         function isOsvPyPI(p) {
@@ -693,6 +858,57 @@
                 }
             }
             return parts.some((s) => stringMentionsCve(s));
+        }
+
+        function cveIdsFromOsvRecord(data) {
+            if (!data || typeof data !== 'object') return [];
+            const out = new Set();
+            const push = (s) => {
+                if (typeof s !== 'string') return;
+                const m = s.match(/\bCVE-\d{4}-\d+\b/gi);
+                if (m) {
+                    for (const x of m) out.add(x.toUpperCase());
+                }
+            };
+            push(data.id);
+            if (Array.isArray(data.aliases)) {
+                for (const a of data.aliases) {
+                    push(a);
+                }
+            }
+            return [...out].sort();
+        }
+
+        function pypiFixedVersionsByNormNameFromOsv(data) {
+            if (!data || typeof data !== 'object') return {};
+            const aff = data.affected;
+            if (!Array.isArray(aff)) return {};
+            const byNorm = {};
+            for (const a of aff) {
+                const pkg = a.package;
+                if (!pkg || typeof pkg !== 'object') continue;
+                if (pkg.ecosystem !== 'PyPI' || pkg.name == null) continue;
+                const nk = normPypiName(pkg.name);
+                const ranges = a.ranges;
+                if (!Array.isArray(ranges)) continue;
+                for (const r of ranges) {
+                    if (!r || r.type !== 'ECOSYSTEM') continue;
+                    const ev = r.events;
+                    if (!Array.isArray(ev)) continue;
+                    for (const e of ev) {
+                        if (!e || e.fixed == null) continue;
+                        const fv = String(e.fixed).trim();
+                        if (!fv) continue;
+                        if (!byNorm[nk]) byNorm[nk] = new Set();
+                        byNorm[nk].add(fv);
+                    }
+                }
+            }
+            const out = {};
+            for (const [k, set] of Object.entries(byNorm)) {
+                out[k] = [...set].sort(cmpSemver);
+            }
+            return out;
         }
 
         function manifestSpecifiersFor(depName, manifestMap) {
@@ -801,7 +1017,7 @@
             return null;
         }
 
-        function depRowsForList(deps, rootPkg, manifestMap, byParentSpecs, allPackages, kind) {
+        function depRowsForList(deps, rootPkg, manifestMap, byParentSpecs, allPackages, kind, depCountsByPkgKey) {
             if (!Array.isArray(deps) || !deps.length) return [];
             const workspace = workspaceLabelFromRoot(rootPkg);
             const rootTitle = `${rootPkg.name}@${rootPkg.version}`;
@@ -810,6 +1026,7 @@
                 if (!dep || dep.name == null) continue;
                 const name = String(dep.name);
                 const { pkg: child, ambiguous } = resolvePkg(allPackages, dep);
+                const cnt = child && depCountsByPkgKey ? depCountsByPkgKey.get(pkgKey(child)) : null;
                 const metaSpec = metadataSpecifierForDependency(name, rootPkg, byParentSpecs);
                 const manSpec = manifestSpecifiersFor(name, manifestMap);
                 const extras = normalizeDepExtras(dep.extra);
@@ -836,6 +1053,8 @@
                     osvPkgId,
                     localSourceLabel,
                     workspaceRoot: { workspace, rootTitle },
+                    directDepCount: cnt ? cnt.directCount : null,
+                    subdepCount: cnt ? cnt.subdepCount : null,
                 });
             }
             rows.sort((a, b) => normName(a.name).localeCompare(normName(b.name)));
@@ -892,7 +1111,7 @@
             return Array.isArray(dev) ? dev : [];
         }
 
-        function buildCollapsedRootGroups(rootPkgs, manifestMap, byParentSpecs, allPackages) {
+        function buildCollapsedRootGroups(rootPkgs, manifestMap, byParentSpecs, allPackages, depCountsByPkgKey) {
             if (!Array.isArray(rootPkgs) || !rootPkgs.length) return [];
             const prodFlat = [];
             const devFlat = [];
@@ -905,6 +1124,7 @@
                         byParentSpecs,
                         allPackages,
                         'prod',
+                        depCountsByPkgKey,
                     ),
                 );
                 devFlat.push(
@@ -915,6 +1135,7 @@
                         byParentSpecs,
                         allPackages,
                         'dev',
+                        depCountsByPkgKey,
                     ),
                 );
             }
@@ -938,9 +1159,11 @@
                 const projectRootsCount = Vue.ref(0);
                 const workspaceAliases = Vue.ref([]);
                 const subdependencyRows = Vue.ref([]);
-                const vulnMaxScoreByPkgId = Vue.ref({});
                 const vulnIdsByPkgId = Vue.ref({});
                 const vulnIdHasCveFromDetails = Vue.ref({});
+                const vulnCveIdsByVulnId = Vue.ref({});
+                const vulnPypiFixesByVulnId = Vue.ref({});
+                const vulnScoreByVulnId = Vue.ref({});
                 const osvScanning = Vue.ref(false);
                 const osvScanError = Vue.ref('');
                 const metaLine = Vue.computed(() => metaLines.value.length > 0);
@@ -970,9 +1193,11 @@
                         pushOsvRow(row, row.packageName, row.packageVersion);
                     }
                     if (!sliceInputs.length) {
-                        vulnMaxScoreByPkgId.value = {};
                         vulnIdsByPkgId.value = {};
                         vulnIdHasCveFromDetails.value = {};
+                        vulnCveIdsByVulnId.value = {};
+                        vulnPypiFixesByVulnId.value = {};
+                        vulnScoreByVulnId.value = {};
                         osvScanError.value = '';
                         osvScanning.value = false;
                         return;
@@ -1008,8 +1233,10 @@
                             }
                         }
                         const uniqueVulnIds = [...new Set(Object.values(nextIds).flat())];
-                        const vulnScoreByVulnId = {};
+                        const scoreByVulnId = {};
                         const detailCveByVulnId = {};
+                        const detailCveIdsByVulnId = {};
+                        const detailPypiFixesByVulnId = {};
                         const detailChunk = 50;
                         for (let i = 0; i < uniqueVulnIds.length; i += detailChunk) {
                             const part = uniqueVulnIds.slice(i, i + detailChunk);
@@ -1020,40 +1247,48 @@
                                             `https://api.osv.dev/v1/vulns/${encodeURIComponent(vid)}`,
                                         );
                                         if (!r.ok) {
-                                            vulnScoreByVulnId[vid] = OSV_UNKNOWN_SEVERITY_SCORE;
+                                            scoreByVulnId[vid] = OSV_UNKNOWN_SEVERITY_SCORE;
                                             detailCveByVulnId[vid] = stringMentionsCve(vid);
+                                            detailCveIdsByVulnId[vid] = cveIdsFromOsvRecord({
+                                                id: vid,
+                                                aliases: [],
+                                            });
+                                            detailPypiFixesByVulnId[vid] = {};
                                             return;
                                         }
                                         const data = await r.json();
                                         const sc = severityScoreFromOsvVulnRecord(data);
-                                        vulnScoreByVulnId[vid] =
+                                        scoreByVulnId[vid] =
                                             sc != null ? sc : OSV_UNKNOWN_SEVERITY_SCORE;
                                         detailCveByVulnId[vid] =
                                             stringMentionsCve(vid) || osvRecordMentionsCve(data);
+                                        detailCveIdsByVulnId[vid] = cveIdsFromOsvRecord(data);
+                                        detailPypiFixesByVulnId[vid] =
+                                            pypiFixedVersionsByNormNameFromOsv(data);
                                     } catch {
-                                        vulnScoreByVulnId[vid] = OSV_UNKNOWN_SEVERITY_SCORE;
+                                        scoreByVulnId[vid] = OSV_UNKNOWN_SEVERITY_SCORE;
                                         detailCveByVulnId[vid] = stringMentionsCve(vid);
+                                        detailCveIdsByVulnId[vid] = cveIdsFromOsvRecord({
+                                            id: vid,
+                                            aliases: [],
+                                        });
+                                        detailPypiFixesByVulnId[vid] = {};
                                     }
                                 }),
                             );
                         }
-                        const nextMax = {};
-                        for (const [pkgId, ids] of Object.entries(nextIds)) {
-                            let m = 0;
-                            for (const vid of ids) {
-                                const s = vulnScoreByVulnId[vid];
-                                m = Math.max(m, s != null ? s : OSV_UNKNOWN_SEVERITY_SCORE);
-                            }
-                            nextMax[pkgId] = Math.min(10, m);
-                        }
-                        vulnMaxScoreByPkgId.value = nextMax;
                         vulnIdsByPkgId.value = nextIds;
                         vulnIdHasCveFromDetails.value = detailCveByVulnId;
+                        vulnCveIdsByVulnId.value = detailCveIdsByVulnId;
+                        vulnPypiFixesByVulnId.value = detailPypiFixesByVulnId;
+                        vulnScoreByVulnId.value = scoreByVulnId;
                     } catch (err) {
                         osvScanError.value = err.message || String(err);
-                        vulnMaxScoreByPkgId.value = {};
                         vulnIdsByPkgId.value = {};
                         vulnIdHasCveFromDetails.value = {};
+                        vulnCveIdsByVulnId.value = {};
+                        vulnPypiFixesByVulnId.value = {};
+                        vulnScoreByVulnId.value = {};
                     } finally {
                         osvScanning.value = false;
                     }
@@ -1065,11 +1300,45 @@
                     return vulnIdsByPkgId.value[id] ?? null;
                 }
 
-                function vulnMaxForRow(row) {
-                    const id = row.osvPkgId;
-                    if (!id) return null;
-                    const m = vulnMaxScoreByPkgId.value[id];
-                    return m != null ? m : null;
+                function vulnScoreForVulnId(vid) {
+                    if (vid == null || typeof vid !== 'string') return OSV_UNKNOWN_SEVERITY_SCORE;
+                    const m = vulnScoreByVulnId.value;
+                    if (!m || typeof m !== 'object') return OSV_UNKNOWN_SEVERITY_SCORE;
+                    const s = m[vid];
+                    return s != null ? s : OSV_UNKNOWN_SEVERITY_SCORE;
+                }
+
+                function vulnAdvisoryGroupsForRow(row) {
+                    const ids = vulnIdsForRow(row);
+                    if (!ids || !ids.length) return [];
+                    const map = vulnCveIdsByVulnId.value;
+                    const fixMap = vulnPypiFixesByVulnId.value;
+                    const pkg = row.name != null ? row.name : row.packageName;
+                    const nk = pkg ? normPypiName(pkg) : '';
+                    return ids.map((vid) => {
+                        const raw = map && map[vid];
+                        let cves = Array.isArray(raw) ? [...raw].sort() : [];
+                        cves = cves.filter((c) => c !== vid);
+                        let patched = [];
+                        if (nk && fixMap && typeof fixMap === 'object') {
+                            const per = fixMap[vid];
+                            if (per && typeof per === 'object' && Array.isArray(per[nk])) {
+                                patched = per[nk];
+                            }
+                        }
+                        return { vid, cves, patched };
+                    });
+                }
+
+                function advisoryCveFallbackLine(row, vid) {
+                    const m = vulnIdHasCveFromDetails.value;
+                    if (!m || typeof m !== 'object' || m[vid] !== true) return false;
+                    const arr = vulnCveIdsByVulnId.value && vulnCveIdsByVulnId.value[vid];
+                    return !Array.isArray(arr) || arr.length === 0;
+                }
+
+                function vulnScoreTitleForVulnId(vid) {
+                    return `OSV ~${vulnScoreForVulnId(vid).toFixed(1)}/10`;
                 }
 
                 function rowMentionsCve(row) {
@@ -1109,9 +1378,11 @@
                     subdependencyRows.value = [];
                     metaLines.value = [];
                     parsed.value = false;
-                    vulnMaxScoreByPkgId.value = {};
                     vulnIdsByPkgId.value = {};
                     vulnIdHasCveFromDetails.value = {};
+                    vulnCveIdsByVulnId.value = {};
+                    vulnPypiFixesByVulnId.value = {};
+                    vulnScoreByVulnId.value = {};
                     osvScanError.value = '';
                     osvScanning.value = false;
                     showOnlyCve.value = false;
@@ -1144,17 +1415,20 @@
                         metaLines.value = lines;
                         const roots = packages.filter(isProjectRoot);
                         projectRootsCount.value = roots.length;
+                        const depCountsByPkgKey = buildDepCountsByPkgKey(packages);
                         const rg = buildCollapsedRootGroups(
                             roots,
                             manifestMap,
                             byParentSpecs,
                             packages,
+                            depCountsByPkgKey,
                         );
                         const sub = buildSubdependencyRows(
                             packages,
                             roots,
                             manifestMap,
                             byParentSpecs,
+                            depCountsByPkgKey,
                         );
                         workspaceAliases.value = assignWorkspaceAliases(rg, sub);
                         rootGroups.value = rg;
@@ -1169,9 +1443,11 @@
                         projectRootsCount.value = 0;
                         workspaceAliases.value = [];
                         subdependencyRows.value = [];
-                        vulnMaxScoreByPkgId.value = {};
                         vulnIdsByPkgId.value = {};
                         vulnIdHasCveFromDetails.value = {};
+                        vulnCveIdsByVulnId.value = {};
+                        vulnPypiFixesByVulnId.value = {};
+                        vulnScoreByVulnId.value = {};
                     }
                     if (name) fileLabel.value = name;
                 }
@@ -1220,11 +1496,16 @@
                     osvScanning,
                     osvScanError,
                     vulnIdsForRow,
-                    vulnMaxForRow,
+                    vulnAdvisoryGroupsForRow,
+                    advisoryCveFallbackLine,
+                    vulnScoreForVulnId,
+                    vulnScoreTitleForVulnId,
                     vulnSeverityClass,
                     hasCveId,
                     rowMentionsCve,
                     osvPyPIListUrl,
+                    cveNvdUrl,
+                    ghsaAdvisoryUrl,
                 };
             },
         };
