@@ -29,10 +29,10 @@
         <div>
             <h1 class="text-3xl pb-4 font-black">uv.lock dependency graph</h1>
             <p class="text-sm text-gray-500 max-w-2xl pb-6">
-                Load a <span class="font-mono text-indigo-300/90">uv.lock</span> file. The graph is the union of dependency trees from project roots
+                Load a <span class="font-mono text-indigo-300/90">uv.lock</span> file. Resolved <span class="font-mono">PyPI</span> versions are checked against <a class="text-indigo-400 underline decoration-indigo-500/50 hover:text-indigo-300" href="https://osv.dev/" target="_blank" rel="noopener">OSV</a>; known vulnerabilities turn the node disk and version line red. The graph is the union of dependency trees from project roots
                 (<span class="font-mono">source</span> is <span class="font-mono">virtual</span> or <span class="font-mono">editable</span>), with shared packages merged into one node.
                 Layout is radial by depth (depth 1 on one ring; deeper rings place each node in a small arc around its parent so edges stay local). Use <span class="font-mono">Ring spacing</span> to scale how far rings sit from the center. Zoom and pan with the mouse.
-                Edge labels use each parent&apos;s <span class="font-mono">requires-dist</span> / <span class="font-mono">requires-dev</span> specifier when uv wrote it; otherwise the resolved <span class="font-mono">==</span> pin. <span class="font-mono">[manifest].constraints</span> (uv) are shown under the node&apos;s resolved version, not on edges.
+                Edge labels use each parent&apos;s <span class="font-mono">requires-dist</span> / <span class="font-mono">requires-dev</span> specifier when uv wrote it; otherwise the resolved <span class="font-mono">==</span> pin. <span class="font-mono">[manifest].constraints</span> (uv) are shown under the node&apos;s resolved version, not on edges. Click a node to open <span class="font-mono">osv.dev</span> with <span class="font-mono">PyPI</span> search for that package name.
             </p>
 
             <div class="rounded-lg border border-indigo-800/80 bg-indigo-900/40 p-4 mb-6 max-w-3xl space-y-4">
@@ -59,8 +59,10 @@
                 </div>
             </div>
 
-            <div v-if="graphStats" class="text-xs font-mono text-gray-500 pb-3">
-                {{ graphStats }}
+            <div v-if="graphStats" class="text-xs font-mono text-gray-500 pb-3 space-y-1">
+                <p>{{ graphStats }}</p>
+                <p v-if="osvScanning" class="text-indigo-400/90">Checking PyPI versions against OSV…</p>
+                <p v-if="osvScanError" class="text-amber-400/90">{{ osvScanError }}</p>
             </div>
 
             <div
@@ -107,11 +109,12 @@
                 <div class="flex flex-wrap gap-4 px-3 py-2 text-xs border-b border-indigo-800/40">
                     <span><span class="inline-block h-2 w-2 rounded-full bg-teal-400 align-middle mr-1"></span> project root</span>
                     <span><span class="inline-block h-2 w-2 rounded-full bg-indigo-400 align-middle mr-1"></span> dependency (deeper = darker; disk radius grows linearly with direct deps, capped)</span>
+                    <span class="text-red-400/90"><span class="inline-block h-2 w-2 rounded-full bg-red-400 align-middle mr-1"></span> node disk and version are red when OSV lists advisories (hover for ids)</span>
                     <span class="text-amber-400/90">dashed edge = ambiguous resolution</span>
                     <span class="text-amber-400/90">amber line under the resolved version = <span class="font-mono">[manifest].constraints</span> for that package (uv)</span>
                     <span class="text-gray-500"><span class="font-mono">*</span> after a constraint or <span class="font-mono">==</span> pin = highest semver when several versions exist in the lockfile.</span>
                     <span class="text-gray-500">Arrows point to the depended-on package (parent <span class="font-mono">→</span> dependency).</span>
-                    <span class="text-gray-500">Nodes show <span class="font-mono">name</span>, optional <span class="font-mono">[extras]</span>, resolved version, and manifest constraints when listed. Edges show the parent&apos;s specifier range or pin. Hover a line for full detail.</span>
+                    <span class="text-gray-500">Nodes show <span class="font-mono">name</span>, optional <span class="font-mono">[extras]</span>, resolved version, and manifest constraints when listed; click a node for OSV <span class="font-mono">PyPI</span> search. Edges show the parent&apos;s specifier range or pin. Hover a line for full detail.</span>
                 </div>
                 <div ref="graphHost" class="relative w-full min-h-[min(70vh,720px)] h-[70vh]"></div>
             </div>
@@ -135,6 +138,18 @@
             return String(n ?? '').toLowerCase();
         }
 
+        function normPypiName(n) {
+            return String(n ?? '')
+                .toLowerCase()
+                .replace(/[-_.]+/g, '-')
+                .replace(/^-+|-+$/g, '');
+        }
+
+        function osvPyPIListUrl(pkgName) {
+            const q = encodeURIComponent(normPypiName(pkgName));
+            return `https://osv.dev/list?ecosystem=PyPI&q=${q}`;
+        }
+
         function pkgKey(p) {
             return `${normName(p.name)}@${p.version}`;
         }
@@ -142,6 +157,13 @@
         function isProjectRoot(p) {
             const s = p.source;
             return s && typeof s === 'object' && ('virtual' in s || 'editable' in s);
+        }
+
+        function isOsvPyPI(p) {
+            if (!p || isProjectRoot(p)) return false;
+            const s = p.source;
+            if (!s || typeof s !== 'object' || s.registry == null) return false;
+            return Boolean(p.name && p.version);
         }
 
         function formatSource(s) {
@@ -784,10 +806,12 @@
                         isRoot: isProjectRoot(node.pkg),
                         extrasDisplay: mergedExtras,
                         depthMin: depth,
+                        osvEligible: isOsvPyPI(node.pkg),
                     });
                 } else {
                     existing.extrasDisplay = mergedExtras;
                     existing.depthMin = Math.min(existing.depthMin, depth);
+                    existing.osvEligible = existing.osvEligible || isOsvPyPI(node.pkg);
                 }
                 for (const e of node.edges) {
                     if (!e.child) continue;
@@ -853,6 +877,10 @@
                 const baseRadiusScale = Vue.ref(5);
                 const manifestConstraints = Vue.ref(null);
                 const metadataSpecByParent = Vue.ref(null);
+                const vulnByPkgId = Vue.ref({});
+                const vulnIdsByPkgId = Vue.ref({});
+                const osvScanning = Vue.ref(false);
+                const osvScanError = Vue.ref('');
 
                 const graphNodeCount = Vue.computed(() => {
                     if (!roots.value.length) return 0;
@@ -899,6 +927,10 @@
                     parsed.value = false;
                     manifestConstraints.value = null;
                     metadataSpecByParent.value = null;
+                    vulnByPkgId.value = {};
+                    vulnIdsByPkgId.value = {};
+                    osvScanError.value = '';
+                    osvScanning.value = false;
                     try {
                         const data = parse(text);
                         parsed.value = true;
@@ -973,6 +1005,81 @@
                 let resetFn = null;
                 let labelStyleFn = null;
 
+                async function runOsvScan() {
+                    if (!roots.value.length) return;
+                    const g = flattenTreeToGraph(
+                        roots.value,
+                        packageList.value,
+                        manifestConstraints.value,
+                        metadataSpecByParent.value,
+                    );
+                    const sliceInputs = [];
+                    const seen = new Set();
+                    for (const n of g.nodes) {
+                        if (!n.osvEligible || !n.version) continue;
+                        if (seen.has(n.id)) continue;
+                        seen.add(n.id);
+                        sliceInputs.push({
+                            id: n.id,
+                            query: {
+                                package: { name: normPypiName(n.name), ecosystem: 'PyPI' },
+                                version: String(n.version),
+                            },
+                        });
+                    }
+                    if (!sliceInputs.length) {
+                        vulnByPkgId.value = {};
+                        vulnIdsByPkgId.value = {};
+                        osvScanError.value = '';
+                        osvScanning.value = false;
+                        return;
+                    }
+                    osvScanning.value = true;
+                    osvScanError.value = '';
+                    const nextVuln = {};
+                    const nextIds = {};
+                    const chunk = 500;
+                    try {
+                        for (let i = 0; i < sliceInputs.length; i += chunk) {
+                            const slice = sliceInputs.slice(i, i + chunk);
+                            const res = await fetch('https://api.osv.dev/v1/querybatch', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    queries: slice.map((s) => s.query),
+                                }),
+                            });
+                            if (!res.ok) {
+                                throw new Error(`OSV HTTP ${res.status}`);
+                            }
+                            const data = await res.json();
+                            const results = Array.isArray(data.results) ? data.results : [];
+                            for (let j = 0; j < slice.length; j++) {
+                                const row = results[j];
+                                const ids =
+                                    row && row.vulns && Array.isArray(row.vulns)
+                                        ? row.vulns.map((v) => v.id).filter(Boolean)
+                                        : [];
+                                if (ids.length) {
+                                    nextVuln[slice[j].id] = true;
+                                    nextIds[slice[j].id] = ids;
+                                }
+                            }
+                        }
+                        vulnByPkgId.value = nextVuln;
+                        vulnIdsByPkgId.value = nextIds;
+                    } catch (err) {
+                        osvScanError.value = err.message || String(err);
+                        vulnByPkgId.value = {};
+                        vulnIdsByPkgId.value = {};
+                    } finally {
+                        osvScanning.value = false;
+                    }
+                    Vue.nextTick(() => {
+                        runGraph();
+                    });
+                }
+
                 function stopGraph() {
                     labelStyleFn = null;
                     const el = graphHost.value;
@@ -1002,19 +1109,21 @@
 
                     const outBySource = countOutEdgesBySource(rawLinks);
                     const mc = manifestConstraints.value;
+                    const vb = vulnByPkgId.value;
                     const nodes = rawNodes.map((n) => {
                         const subDepCount = outBySource.get(n.id) ?? 0;
                         const vis = dependencyNodeStyle({ ...n, subDepCount });
                         const manifestConstraintText = mc
                             ? manifestSpecifiersFor(n.name, mc)
                             : null;
+                        const vuln = Boolean(vb[n.id]);
                         return {
                             ...n,
                             subDepCount,
                             manifestConstraintText,
                             nodeR: vis.r,
-                            nodeFill: vis.fill,
-                            nodeStroke: vis.stroke,
+                            nodeFill: vuln ? '#f87171' : vis.fill,
+                            nodeStroke: vuln ? '#991b1b' : vis.stroke,
                         };
                     });
                     layoutRadialNearParents(nodes, rawLinks, w, h, baseRadiusScale.value);
@@ -1098,14 +1207,21 @@
                         .data(nodes)
                         .join('g');
 
-                    node
+                    const nodeHit = node
+                        .append('a')
+                        .attr('href', (d) => osvPyPIListUrl(d.name))
+                        .attr('target', '_blank')
+                        .attr('rel', 'noopener noreferrer')
+                        .style('cursor', 'pointer');
+
+                    nodeHit
                         .append('circle')
                         .attr('r', (d) => d.nodeR)
                         .attr('fill', (d) => d.nodeFill)
                         .attr('stroke', (d) => d.nodeStroke)
                         .attr('stroke-width', 1.5);
 
-                    node.append('text')
+                    nodeHit.append('text')
                         .attr('class', 'graph-node-dep-count')
                         .attr('text-anchor', 'middle')
                         .attr('dominant-baseline', 'central')
@@ -1120,19 +1236,17 @@
                             const scale = digits > 2 ? 0.38 : 0.52;
                             return Math.max(7, Math.min(15, d.nodeR * scale));
                         })
-                        .style('pointer-events', 'none')
                         .text((d) => {
                             const n = d.subDepCount != null ? d.subDepCount : 0;
                             return n > 0 ? String(n) : '';
                         });
 
-                    const labels = node
+                    const labels = nodeHit
                         .append('text')
                         .attr('text-anchor', 'middle')
                         .attr('y', (d) => d.nodeR + 4)
                         .attr('fill', '#a5b4fc')
-                        .attr('font-family', 'ui-monospace, monospace')
-                        .style('pointer-events', 'none');
+                        .attr('font-family', 'ui-monospace, monospace');
 
                     labels.each(function appendNodeLabel(d) {
                         const t = d3.select(this);
@@ -1151,11 +1265,13 @@
                                 .attr('fill', '#a5b4fc')
                                 .text(`[${d.extrasDisplay.join(', ')}]`);
                         }
+                        const vb = vulnByPkgId.value;
                         t.append('tspan')
+                            .attr('class', 'graph-node-version')
                             .attr('x', 0)
                             .attr('dy', '1.05em')
                             .attr('font-size', 8)
-                            .attr('fill', '#94a3b8')
+                            .attr('fill', vb[d.id] ? '#f87171' : '#94a3b8')
                             .text(String(d.version ?? ''));
                         if (d.manifestConstraintText) {
                             t.append('tspan')
@@ -1171,15 +1287,21 @@
                         }
                     });
 
-                    node.append('title').text((d) => {
+                    nodeHit.append('title').text((d) => {
                         const base = `${pkgLabelWithExtras(d.name, d.extrasDisplay)} ${d.version}`;
                         const sd = d.subDepCount != null ? d.subDepCount : 0;
                         const deps = `direct deps in graph: ${sd}`;
                         const man = d.manifestConstraintText
                             ? ` ${d.manifestConstraintText}`
                             : '';
-                        if (d.isRoot) return `${base} (${deps})${man}`;
-                        return `${base} (depth ${d.depthMin}, ${deps})${man}`;
+                        const ids = vulnIdsByPkgId.value[d.id];
+                        const osv =
+                            ids && ids.length
+                                ? `\nOSV: ${ids.join(', ')}`
+                                : '';
+                        const open = `\nOpen: ${osvPyPIListUrl(d.name)}`;
+                        if (d.isRoot) return `${base} (${deps})${man}${osv}${open}`;
+                        return `${base} (depth ${d.depthMin}, ${deps})${man}${osv}${open}`;
                     });
 
                     function drawRadial() {
@@ -1271,8 +1393,12 @@
                 Vue.watch(
                     roots,
                     () => {
+                        vulnByPkgId.value = {};
+                        vulnIdsByPkgId.value = {};
+                        osvScanError.value = '';
                         Vue.nextTick(() => {
                             runGraph();
+                            void runOsvScan();
                         });
                     },
                 );
@@ -1282,7 +1408,10 @@
                 });
 
                 Vue.onMounted(() => {
-                    Vue.nextTick(() => runGraph());
+                    Vue.nextTick(() => {
+                        runGraph();
+                        void runOsvScan();
+                    });
                 });
 
                 Vue.onBeforeUnmount(() => {
@@ -1315,6 +1444,8 @@
                     baseRadiusScale,
                     fitGraph,
                     resetZoom,
+                    osvScanning,
+                    osvScanError,
                 };
             },
         };
