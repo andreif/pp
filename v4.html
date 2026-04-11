@@ -1,0 +1,1092 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>uv.lock dependency graph</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        if (location.protocol === 'https:') {
+            const t = parseInt(location.search.slice(1)) || 0;
+            const n = new Date().getTime();
+            if (n - t > 60 * 5 * 1000) {
+                location.href = location.pathname + '?' + n + location.hash;
+            }
+        }
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-indigo-950 p-2 lg:p-8 lg:px-24 text-gray-300 min-h-screen">
+    <div id="app">
+        <uv-lock-graph></uv-lock-graph>
+    </div>
+    <script type="importmap">{"imports": {
+      "vue": "https://cdn.jsdelivr.net/npm/vue@3/dist/vue.esm-browser.js",
+      "smol-toml": "./vendor/smol-toml-1.6.1/dist/index.js",
+      "d3": "https://cdn.jsdelivr.net/npm/d3@7/+esm"
+    }}</script>
+
+    <script type="text/x-template" id="uv-graph-root-tpl">
+        <div>
+            <h1 class="text-3xl pb-4 font-black">uv.lock dependency graph</h1>
+            <p class="text-sm text-gray-500 max-w-2xl pb-6">
+                Load a <span class="font-mono text-indigo-300/90">uv.lock</span> file. The graph is the union of dependency trees from project roots
+                (<span class="font-mono">source</span> is <span class="font-mono">virtual</span> or <span class="font-mono">editable</span>), with shared packages merged into one node.
+                Layout is a force simulation (nodes and edges you can drag and zoom). Same environment filters as
+                <a href="v3.html" class="text-indigo-400 hover:text-indigo-200 underline">v3</a>.
+                Version ranges come from each parent package's <span class="font-mono">[package.metadata] requires-dist</span> / <span class="font-mono">requires-dev</span> when uv wrote them (e.g. <span class="font-mono">html2text</span> <span class="font-mono">>=2024.2.26</span>), else from <span class="font-mono">[manifest].constraints</span>. Edges show that constraint; resolved versions appear on nodes.
+            </p>
+
+            <div class="rounded-lg border border-indigo-800/80 bg-indigo-900/40 p-4 mb-6 max-w-3xl space-y-4">
+                <h2 class="text-lg font-semibold text-indigo-200">Lockfile</h2>
+                <label
+                    class="flex flex-col gap-2 cursor-pointer rounded-md border border-dashed border-indigo-700/60 bg-indigo-950/30 p-4 transition-colors hover:border-indigo-500/50"
+                    :class="dragOver ? 'border-teal-500/70 bg-indigo-900/50' : ''"
+                    @dragover.prevent="dragOver = true"
+                    @dragleave.prevent="dragOver = false"
+                    @drop.prevent="onDrop"
+                >
+                    <span class="text-xs text-gray-500">Choose or drop <span class="font-mono">uv.lock</span></span>
+                    <input
+                        type="file"
+                        accept=".lock,text/plain"
+                        class="text-sm file:mr-3 file:rounded-md file:border-0 file:bg-indigo-700 file:px-3 file:py-1.5 file:text-sm file:text-white hover:file:bg-indigo-600"
+                        @change="onFile"
+                    />
+                </label>
+                <p v-if="fileLabel" class="text-xs font-mono text-indigo-200/90">{{ fileLabel }}</p>
+                <p v-if="parseError" class="text-sm text-amber-400">{{ parseError }}</p>
+                <div v-if="metaLine" class="text-xs text-gray-500 font-mono space-y-1">
+                    <p v-for="(line, i) in metaLines" :key="i">{{ line }}</p>
+                </div>
+            </div>
+
+            <div
+                v-if="parsed && packageList.length"
+                class="rounded-lg border border-indigo-800/80 bg-indigo-900/40 p-4 mb-6 max-w-3xl space-y-4"
+            >
+                <h2 class="text-lg font-semibold text-indigo-200">Environment</h2>
+                <p class="text-xs text-gray-500 pb-2">
+                    Optional filters for <span class="font-mono">python_version</span>,
+                    <span class="font-mono">sys_platform</span>, and
+                    <span class="font-mono">platform_machine</span> in dependency markers. Any = do not filter on that dimension.
+                </p>
+                <fieldset class="min-w-0 border-0 p-0 m-0 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
+                    <label class="flex min-w-0 flex-1 flex-col gap-1">
+                        <span class="text-xs text-gray-500">Platform (<span class="font-mono">sys_platform</span>)</span>
+                        <select
+                            v-model="globalPlatformSelected"
+                            class="w-full max-w-xs rounded-md border border-indigo-700/50 bg-indigo-900 p-2 text-sm font-mono text-indigo-100"
+                        >
+                            <option value="">Any</option>
+                            <option v-for="pl in platformChoices" :key="'env-pl-' + pl" :value="pl">{{ pl }}</option>
+                        </select>
+                    </label>
+                    <label class="flex min-w-0 flex-1 flex-col gap-1">
+                        <span class="text-xs text-gray-500">Python (<span class="font-mono">python_version</span>)</span>
+                        <select
+                            v-model="globalPythonSelected"
+                            class="w-full max-w-xs rounded-md border border-indigo-700/50 bg-indigo-900 p-2 text-sm font-mono text-indigo-100"
+                        >
+                            <option value="">Any</option>
+                            <option v-for="py in pythonVersionChoices" :key="'env-py-' + py" :value="py">{{ py }}</option>
+                        </select>
+                    </label>
+                    <label class="flex min-w-0 flex-1 flex-col gap-1">
+                        <span class="text-xs text-gray-500">Machine (<span class="font-mono">platform_machine</span>)</span>
+                        <select
+                            v-model="globalPlatformMachineSelected"
+                            class="w-full max-w-xs rounded-md border border-indigo-700/50 bg-indigo-900 p-2 text-sm font-mono text-indigo-100"
+                        >
+                            <option value="">Any</option>
+                            <option v-for="m in platformMachineChoices" :key="'env-pm-' + m" :value="m">{{ m }}</option>
+                        </select>
+                    </label>
+                </fieldset>
+            </div>
+
+            <div v-if="graphStats" class="text-xs font-mono text-gray-500 pb-3">
+                {{ graphStats }}
+            </div>
+
+            <div
+                v-if="roots.length && graphNodeCount"
+                class="rounded-lg border border-indigo-800/80 bg-indigo-950/30 overflow-hidden mb-6"
+            >
+                <div class="flex flex-wrap items-center gap-2 border-b border-indigo-800/60 bg-indigo-900/50 px-3 py-2">
+                    <span class="text-xs text-gray-500 mr-2">Graph</span>
+                    <button
+                        type="button"
+                        class="rounded-md border border-indigo-700/60 bg-indigo-900 px-2 py-1 text-xs font-mono text-indigo-200 hover:bg-indigo-800/80"
+                        @click="fitGraph"
+                    >
+                        Fit
+                    </button>
+                    <button
+                        type="button"
+                        class="rounded-md border border-indigo-700/60 bg-indigo-900 px-2 py-1 text-xs font-mono text-indigo-200 hover:bg-indigo-800/80"
+                        @click="resetZoom"
+                    >
+                        Reset zoom
+                    </button>
+                    <label class="flex items-center gap-2 text-xs text-gray-500 ml-2">
+                        <span>Labels</span>
+                        <input v-model="showLabels" type="checkbox" class="rounded border-indigo-600" />
+                    </label>
+                </div>
+                <div class="flex flex-wrap gap-4 px-3 py-2 text-xs border-b border-indigo-800/40">
+                    <span><span class="inline-block h-2 w-2 rounded-full bg-teal-400 align-middle mr-1"></span> project root</span>
+                    <span><span class="inline-block h-2 w-2 rounded-full bg-indigo-400 align-middle mr-1"></span> dependency</span>
+                    <span class="text-amber-400/90">dashed edge = ambiguous resolution</span>
+                    <span class="text-gray-500"><span class="font-mono">*</span> after a constraint or <span class="font-mono">==</span> pin = highest semver when several versions exist in the lockfile.</span>
+                    <span class="text-gray-500">Nodes show <span class="font-mono">name</span>, optional <span class="font-mono">[extras]</span> from the incoming edge, and <span class="font-mono">==version</span>. Edges show the declared constraint (or a lock <span class="font-mono">==</span> pin when there is no specifier). Hover a line for full detail.</span>
+                </div>
+                <div ref="graphHost" class="relative w-full min-h-[min(70vh,720px)] h-[70vh]"></div>
+            </div>
+            <p v-else-if="parsed && !parseError && roots.length === 0" class="text-sm text-amber-200/90 max-w-2xl">
+                No project roots found (no <span class="font-mono">source = { virtual = ... }</span> or
+                <span class="font-mono">editable = ...</span>). This file may be from
+                <span class="font-mono">uv pip compile</span> or similar.
+            </p>
+            <p v-else-if="parsed && roots.length && !graphNodeCount" class="text-sm text-gray-500 max-w-2xl">
+                Roots resolved but no graph nodes (empty trees).
+            </p>
+        </div>
+    </script>
+
+    <script type="module">
+        import * as Vue from 'vue';
+        import { parse } from 'smol-toml';
+        import * as d3 from 'd3';
+
+        function normName(n) {
+            return String(n ?? '').toLowerCase();
+        }
+
+        function pkgKey(p) {
+            return `${normName(p.name)}@${p.version}`;
+        }
+
+        function isProjectRoot(p) {
+            const s = p.source;
+            return s && typeof s === 'object' && ('virtual' in s || 'editable' in s);
+        }
+
+        function formatSource(s) {
+            if (!s || typeof s !== 'object') return '';
+            if (s.registry != null) return `registry ${s.registry}`;
+            if (s.virtual != null) return `virtual ${s.virtual}`;
+            if (s.editable != null) return `editable ${s.editable}`;
+            if (s.git != null) {
+                const g = s.git;
+                if (g && typeof g === 'object' && g.url) return `git ${g.url}`;
+                return `git ${String(g)}`;
+            }
+            if (s.url != null) return `url ${typeof s.url === 'object' && s.url.url ? s.url.url : s.url}`;
+            if (s.path != null) return `path ${s.path}`;
+            if (s.directory != null) return `directory ${s.directory}`;
+            return '';
+        }
+
+        function manifestSpecifiersFor(depName, manifestMap) {
+            if (!manifestMap || !depName) return null;
+            const arr = manifestMap.get(normName(depName));
+            if (!arr || !arr.length) return null;
+            return arr.join(', ');
+        }
+
+        function collectParentSpecifiersByPackage(packages) {
+            const byParent = new Map();
+            if (!Array.isArray(packages)) return byParent;
+            for (const pkg of packages) {
+                const md = pkg.metadata;
+                if (!md || typeof md !== 'object') continue;
+                const acc = new Map();
+                function addRow(row) {
+                    if (!row || typeof row !== 'object') return;
+                    const n = row.name;
+                    if (n == null) return;
+                    const spec = row.specifier != null ? String(row.specifier).trim() : '';
+                    if (!spec) return;
+                    const k = normName(n);
+                    if (!acc.has(k)) acc.set(k, []);
+                    acc.get(k).push(spec);
+                }
+                function addArray(arr) {
+                    if (!Array.isArray(arr)) return;
+                    for (const row of arr) addRow(row);
+                }
+                addArray(md['requires-dist']);
+                const reqDev = md['requires-dev'];
+                if (reqDev && typeof reqDev === 'object') {
+                    if (Array.isArray(reqDev.dev)) addArray(reqDev.dev);
+                }
+                if (!acc.size) continue;
+                const flat = new Map();
+                acc.forEach((specs, k) => {
+                    flat.set(k, [...new Set(specs)].join(', '));
+                });
+                byParent.set(pkgKey(pkg), flat);
+            }
+            return byParent;
+        }
+
+        function specifiersForEdge(depName, parentPkg, manifestMap, byParentSpecs) {
+            if (parentPkg && byParentSpecs) {
+                const inner = byParentSpecs.get(pkgKey(parentPkg));
+                if (inner) {
+                    const s = inner.get(normName(depName));
+                    if (s) return { text: s, from: 'metadata' };
+                }
+            }
+            const m = manifestSpecifiersFor(depName, manifestMap);
+            if (m) return { text: m, from: 'manifest' };
+            return null;
+        }
+
+        function collectManifestConstraints(data) {
+            const m = new Map();
+            const man = data.manifest;
+            if (!man || typeof man !== 'object') return m;
+            const constraints = man.constraints;
+            if (!Array.isArray(constraints)) return m;
+            for (const c of constraints) {
+                if (!c || typeof c !== 'object') continue;
+                const n = c.name;
+                if (n == null) continue;
+                const spec = c.specifier != null ? String(c.specifier).trim() : '';
+                const k = normName(n);
+                if (!m.has(k)) m.set(k, []);
+                if (spec) m.get(k).push(spec);
+            }
+            return m;
+        }
+
+        function resolutionExplanation(
+            dep,
+            childPkg,
+            ambiguous,
+            all,
+            manifestConstraints,
+            parentPkg,
+            metadataSpecByParent,
+        ) {
+            const name = dep.name || '?';
+            const parts = [];
+            const candidates = all.filter((p) => normName(p.name) === normName(name));
+            const nCand = candidates.length;
+
+            const spec = specifiersForEdge(name, parentPkg, manifestConstraints, metadataSpecByParent);
+            if (spec) {
+                if (spec.from === 'metadata') {
+                    parts.push(
+                        `${parentPkg?.name ?? '?'} declares ${name} ${spec.text} (from [package.metadata] requires-dist or requires-dev).`,
+                    );
+                } else {
+                    parts.push(
+                        `Project manifest constraint(s) for ${name}: ${spec.text} (from [manifest].constraints; apply to resolution for this name).`,
+                    );
+                }
+            }
+
+            if (dep.version) {
+                parts.push(`Lockfile pins ${name}==${dep.version}.`);
+                if (childPkg && childPkg.version === dep.version) {
+                    parts.push('Chosen package matches that pin.');
+                }
+            } else if (nCand === 1 && childPkg) {
+                parts.push(`Only ${name} release in the lockfile (${childPkg.version}).`);
+            } else if (dep.source != null && !ambiguous && childPkg) {
+                const srcHint = formatSource(dep.source);
+                parts.push(
+                    `Dependency source ${srcHint || JSON.stringify(dep.source)} matched ${childPkg.version}.`,
+                );
+            } else if (ambiguous && childPkg) {
+                parts.push(
+                    `${nCand} versions of ${name} in this lockfile; ==${childPkg.version} was chosen (highest semver among them).`,
+                );
+            } else if (childPkg) {
+                parts.push(
+                    `This edge has no version field in the lockfile (uv omits it when the name maps to a single package); the chosen release is ==${childPkg.version}.`,
+                );
+            }
+
+            if (dep.extra && dep.extra.length) {
+                parts.push(
+                    `Edge extras: [${dep.extra.join(', ')}] (optional dependency only when these extras are active upstream).`,
+                );
+            }
+            if (dep.marker) {
+                parts.push(`Marker: ${dep.marker}`);
+            }
+            return parts.join(' ');
+        }
+
+        function edgeShortLabel(
+            dep,
+            ambiguous,
+            childVersion,
+            manifestConstraints,
+            parentPkg,
+            metadataSpecByParent,
+        ) {
+            const spec = specifiersForEdge(dep.name, parentPkg, manifestConstraints, metadataSpecByParent);
+            let core;
+            if (spec) {
+                core = spec.text;
+                if (ambiguous) core = `${core}*`;
+            } else if (childVersion) {
+                core = `==${childVersion}`;
+                if (ambiguous) core = `${core}*`;
+            } else if (dep.version) {
+                core = `==${dep.version}`;
+            } else {
+                core = '?';
+            }
+            const bits = [core];
+            if (dep.extra && dep.extra.length) bits.push(`[${dep.extra.join(',')}]`);
+            let s = bits.join(' ');
+            if (dep.marker) {
+                const mk = dep.marker.length > 12 ? `${dep.marker.slice(0, 10)}…` : dep.marker;
+                s = `${s} ${mk}`;
+            }
+            if (s.length > 48) return `${s.slice(0, 46)}…`;
+            return s;
+        }
+
+        const PYTHON_VERSION_CHOICES = ['3.14', '3.13', '3.12', '3.11', '3.10', '3.9'];
+        const PLATFORM_CHOICES = ['linux', 'darwin', 'win32'];
+        const PLATFORM_MACHINE_CHOICES = [
+            'x86_64',
+            'AMD64',
+            'aarch64',
+            'arm64',
+            'armv7l',
+            'i686',
+            'ppc64le',
+            's390x',
+            'riscv64',
+            'wasm32',
+        ];
+
+        function parsePyVerLabel(label) {
+            const m = String(label).match(/^(\d+)\.(\d+)/);
+            if (!m) return null;
+            return [parseInt(m[1], 10), parseInt(m[2], 10)];
+        }
+
+        function parsePyVerFromMarker(s) {
+            const m = String(s).match(/^(\d+)\.(\d+)(?:\.(\d+))?/);
+            if (!m) return null;
+            return [parseInt(m[1], 10), parseInt(m[2], 10), m[3] ? parseInt(m[3], 10) : 0];
+        }
+
+        function cmpVerTuple(a, b) {
+            for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+                const x = a[i] ?? 0;
+                const y = b[i] ?? 0;
+                if (x < y) return -1;
+                if (x > y) return 1;
+            }
+            return 0;
+        }
+
+        function cmpVerOp(lhs, op, rhs) {
+            const c = cmpVerTuple(lhs, rhs);
+            if (op === '==') return c === 0;
+            if (op === '!=') return c !== 0;
+            if (op === '>') return c > 0;
+            if (op === '<') return c < 0;
+            if (op === '>=') return c >= 0;
+            if (op === '<=') return c <= 0;
+            return true;
+        }
+
+        function evalPythonClause(clause, pyLabel) {
+            if (!pyLabel) return true;
+            const m = clause.match(/python_version\s*(>=|<=|==|!=|>|<)\s*["']([^"']+)["']/i);
+            if (!m) return true;
+            const lhs = parsePyVerLabel(pyLabel);
+            const rhs = parsePyVerFromMarker(m[2]);
+            if (!lhs || !rhs) return true;
+            const lhs3 = [lhs[0], lhs[1], 0];
+            const rhs3 = [rhs[0], rhs[1], rhs[2] ?? 0];
+            return cmpVerOp(lhs3, m[1], rhs3);
+        }
+
+        function evalSysPlatformClause(clause, plat) {
+            if (!plat) return true;
+            const m = clause.match(/sys_platform\s*(==|!=)\s*["']([^"']+)["']/i);
+            if (!m) return true;
+            const want = m[2].toLowerCase();
+            const got = String(plat).toLowerCase();
+            if (m[1] === '==') return want === got;
+            return want !== got;
+        }
+
+        function evalPlatformMachineClause(clause, machine) {
+            if (!machine) return true;
+            const m = clause.match(/platform_machine\s*(==|!=)\s*["']([^"']+)["']/i);
+            if (!m) return true;
+            const want = m[2].toLowerCase();
+            const got = String(machine).toLowerCase();
+            if (m[1] === '==') return want === got;
+            return want !== got;
+        }
+
+        function activeExtrasSet(activeExtras) {
+            if (!activeExtras || !activeExtras.length) return null;
+            return new Set(activeExtras.map((x) => String(x).toLowerCase()));
+        }
+
+        function markerApplies(markerStr, env, activeExtras) {
+            const raw = markerStr != null ? String(markerStr).trim() : '';
+            if (!raw) return true;
+            const exSet = activeExtrasSet(activeExtras);
+            const clauses = raw.split(/\s+and\s+/i).map((x) => x.trim()).filter(Boolean);
+            for (const cl of clauses) {
+                if (/python_version/i.test(cl)) {
+                    if (!env.pythonVersion) continue;
+                    if (!evalPythonClause(cl, env.pythonVersion)) return false;
+                } else if (/sys_platform/i.test(cl)) {
+                    if (!env.sysPlatform) continue;
+                    if (!evalSysPlatformClause(cl, env.sysPlatform)) return false;
+                } else if (/platform_machine/i.test(cl)) {
+                    if (!env.platformMachine) continue;
+                    if (!evalPlatformMachineClause(cl, env.platformMachine)) return false;
+                } else if (/extra\s*==\s*["']([^"']+)["']/i.test(cl)) {
+                    const m = cl.match(/extra\s*==\s*["']([^"']+)["']/i);
+                    if (!m) continue;
+                    if (!exSet) continue;
+                    if (!exSet.has(m[1].toLowerCase())) return false;
+                }
+            }
+            return true;
+        }
+
+        function depExtraApplies(dep, activeExtras) {
+            const ex = dep.extra;
+            if (!ex || !Array.isArray(ex) || ex.length === 0) return true;
+            const exSet = activeExtrasSet(activeExtras);
+            if (!exSet) return true;
+            return ex.some((e) => exSet.has(String(e).toLowerCase()));
+        }
+
+        function normalizeDepExtras(ex) {
+            if (ex == null) return null;
+            if (Array.isArray(ex) && ex.length) return ex.map((e) => String(e));
+            return null;
+        }
+
+        function childFilterExtras(parentFilterExtras, dep) {
+            const edge = normalizeDepExtras(dep.extra);
+            if (!edge || !edge.length) return null;
+            if (!parentFilterExtras || !parentFilterExtras.length) return edge;
+            const ps = new Set(parentFilterExtras.map((x) => String(x).toLowerCase()));
+            const narrowed = edge.filter((e) => ps.has(String(e).toLowerCase()));
+            return narrowed.length ? narrowed : edge;
+        }
+
+        function cmpSemver(a, b) {
+            const pa = String(a).split('.').map((x) => parseInt(x, 10) || 0);
+            const pb = String(b).split('.').map((x) => parseInt(x, 10) || 0);
+            const n = Math.max(pa.length, pb.length);
+            for (let i = 0; i < n; i += 1) {
+                const x = pa[i] ?? 0;
+                const y = pb[i] ?? 0;
+                if (x < y) return -1;
+                if (x > y) return 1;
+            }
+            return 0;
+        }
+
+        function resolvePkg(all, dep) {
+            const n = normName(dep.name);
+            const candidates = all.filter((p) => normName(p.name) === n);
+            if (candidates.length === 0) return { pkg: null, ambiguous: false };
+            if (dep.version) {
+                const hit = candidates.find((p) => p.version === dep.version);
+                return { pkg: hit ?? null, ambiguous: false };
+            }
+            if (candidates.length === 1) return { pkg: candidates[0], ambiguous: false };
+            if (dep.source != null) {
+                const want = JSON.stringify(dep.source);
+                const hit = candidates.find((p) => JSON.stringify(p.source) === want);
+                if (hit) return { pkg: hit, ambiguous: false };
+            }
+            const sorted = [...candidates].sort((a, b) => cmpSemver(b.version, a.version));
+            return { pkg: sorted[0], ambiguous: true };
+        }
+
+        function buildNode(pkg, all, stack, env, filterExtras, displayExtras) {
+            const deps = Array.isArray(pkg.dependencies) ? pkg.dependencies : [];
+            const edges = [];
+            for (const dep of deps) {
+                if (!depExtraApplies(dep, filterExtras)) continue;
+                if (dep.marker && !markerApplies(dep.marker, env, filterExtras)) continue;
+                const { pkg: child, ambiguous } = resolvePkg(all, dep);
+                if (!child) {
+                    edges.push({ dep, child: null, unresolved: true, circular: false, ambiguous: false });
+                    continue;
+                }
+                const ck = pkgKey(child);
+                if (stack.has(ck)) {
+                    edges.push({ dep, child: null, unresolved: false, circular: true, ambiguous: false });
+                    continue;
+                }
+                stack.add(ck);
+                const sub = buildNode(
+                    child,
+                    all,
+                    stack,
+                    env,
+                    childFilterExtras(filterExtras, dep),
+                    normalizeDepExtras(dep.extra),
+                );
+                stack.delete(ck);
+                edges.push({ dep, child: sub, unresolved: false, circular: false, ambiguous });
+            }
+            return {
+                pkg,
+                edges,
+                dependencyExtras: displayExtras ?? null,
+            };
+        }
+
+        function collectRoots(packages, env) {
+            const roots = packages.filter(isProjectRoot);
+            return roots.map((p) => buildNode(p, packages, new Set([pkgKey(p)]), env, null, null));
+        }
+
+        function unionDependencyExtras(a, b) {
+            const seen = new Set();
+            const out = [];
+            function add(arr) {
+                if (!arr || !arr.length) return;
+                for (const x of arr) {
+                    const k = String(x).toLowerCase();
+                    if (seen.has(k)) continue;
+                    seen.add(k);
+                    out.push(String(x));
+                }
+            }
+            add(a);
+            add(b);
+            return out.length ? out : null;
+        }
+
+        function pkgLabelWithExtras(name, extrasDisplay) {
+            if (extrasDisplay && extrasDisplay.length) {
+                return `${name}[${extrasDisplay.join(', ')}]`;
+            }
+            return name;
+        }
+
+        function flattenTreeToGraph(roots, allPackages, manifestConstraints, metadataSpecByParent) {
+            const all = Array.isArray(allPackages) ? allPackages : [];
+            const nodes = new Map();
+            const edgeMap = new Map();
+
+            function visit(node) {
+                const id = pkgKey(node.pkg);
+                const existing = nodes.get(id);
+                const mergedExtras = unionDependencyExtras(existing?.extrasDisplay, node.dependencyExtras);
+                if (!existing) {
+                    nodes.set(id, {
+                        id,
+                        name: node.pkg.name,
+                        version: node.pkg.version,
+                        isRoot: isProjectRoot(node.pkg),
+                        extrasDisplay: mergedExtras,
+                    });
+                } else {
+                    existing.extrasDisplay = mergedExtras;
+                }
+                for (const e of node.edges) {
+                    if (!e.child) continue;
+                    const tid = pkgKey(e.child.pkg);
+                    const k = `${id}->${tid}`;
+                    const detail = resolutionExplanation(
+                        e.dep,
+                        e.child.pkg,
+                        e.ambiguous,
+                        all,
+                        manifestConstraints,
+                        node.pkg,
+                        metadataSpecByParent,
+                    );
+                    const short = edgeShortLabel(
+                        e.dep,
+                        e.ambiguous,
+                        e.child.pkg.version,
+                        manifestConstraints,
+                        node.pkg,
+                        metadataSpecByParent,
+                    );
+                    if (!edgeMap.has(k)) {
+                        edgeMap.set(k, {
+                            source: id,
+                            target: tid,
+                            ambiguous: e.ambiguous,
+                            detailFull: detail,
+                            shortLabel: short,
+                        });
+                    } else {
+                        const ex = edgeMap.get(k);
+                        ex.ambiguous = ex.ambiguous || e.ambiguous;
+                        if (ex.detailFull !== detail) {
+                            ex.detailFull = `${ex.detailFull}\n---\n${detail}`;
+                        }
+                        if (ex.shortLabel !== short) {
+                            ex.shortLabel = `${ex.shortLabel} | ${short}`;
+                            if (ex.shortLabel.length > 44) ex.shortLabel = `${ex.shortLabel.slice(0, 42)}…`;
+                        }
+                    }
+                    visit(e.child);
+                }
+            }
+            roots.forEach(visit);
+            return { nodes: [...nodes.values()], links: [...edgeMap.values()] };
+        }
+
+        const UvLockGraph = {
+            template: '#uv-graph-root-tpl',
+            setup() {
+                const parsed = Vue.ref(false);
+                const parseError = Vue.ref('');
+                const fileLabel = Vue.ref('');
+                const metaLines = Vue.ref([]);
+                const roots = Vue.ref([]);
+                const packageList = Vue.ref([]);
+                const dragOver = Vue.ref(false);
+                const globalPythonSelected = Vue.ref('');
+                const globalPlatformSelected = Vue.ref('');
+                const globalPlatformMachineSelected = Vue.ref('');
+                const graphHost = Vue.ref(null);
+                const showLabels = Vue.ref(true);
+                const manifestConstraints = Vue.ref(null);
+                const metadataSpecByParent = Vue.ref(null);
+
+                const graphNodeCount = Vue.computed(() => {
+                    if (!roots.value.length) return 0;
+                    return flattenTreeToGraph(
+                        roots.value,
+                        packageList.value,
+                        manifestConstraints.value,
+                        metadataSpecByParent.value,
+                    ).nodes.length;
+                });
+
+                const graphStats = Vue.computed(() => {
+                    if (!roots.value.length) return '';
+                    const g = flattenTreeToGraph(
+                        roots.value,
+                        packageList.value,
+                        manifestConstraints.value,
+                        metadataSpecByParent.value,
+                    );
+                    return `nodes: ${g.nodes.length}  edges: ${g.links.length}`;
+                });
+
+                const metaLine = Vue.computed(() => metaLines.value.length > 0);
+
+                function rebuildRoots() {
+                    const pkgs = packageList.value;
+                    if (!pkgs.length) {
+                        roots.value = [];
+                        return;
+                    }
+                    const env = {
+                        pythonVersion: globalPythonSelected.value.trim() || null,
+                        sysPlatform: globalPlatformSelected.value.trim() || null,
+                        platformMachine: globalPlatformMachineSelected.value.trim() || null,
+                    };
+                    roots.value = collectRoots(pkgs, env);
+                }
+
+                function applyLockText(text, name) {
+                    parseError.value = '';
+                    roots.value = [];
+                    packageList.value = [];
+                    metaLines.value = [];
+                    parsed.value = false;
+                    manifestConstraints.value = null;
+                    metadataSpecByParent.value = null;
+                    try {
+                        const data = parse(text);
+                        parsed.value = true;
+                        const packages = Array.isArray(data.package) ? data.package : [];
+                        const mc = collectManifestConstraints(data);
+                        manifestConstraints.value = mc.size ? mc : null;
+                        const pb = collectParentSpecifiersByPackage(packages);
+                        metadataSpecByParent.value = pb.size ? pb : null;
+                        const lines = [];
+                        if (data['requires-python'] != null) {
+                            lines.push(`requires-python: ${data['requires-python']}`);
+                        }
+                        if (data.version != null) lines.push(`lock version: ${data.version}`);
+                        if (data.revision != null) lines.push(`revision: ${data.revision}`);
+                        lines.push(`packages: ${packages.length}`);
+                        if (mc.size) {
+                            let n = 0;
+                            mc.forEach((specs) => {
+                                n += specs.length;
+                            });
+                            lines.push(`manifest constraints: ${n} (unique packages: ${mc.size})`);
+                        }
+                        if (pb.size) {
+                            let n = 0;
+                            pb.forEach((inner) => {
+                                n += inner.size;
+                            });
+                            lines.push(
+                                `metadata specifiers: ${n} (requires-dist / requires-dev across ${pb.size} packages)`,
+                            );
+                        }
+                        metaLines.value = lines;
+                        packageList.value = packages;
+                        rebuildRoots();
+                    } catch (err) {
+                        parseError.value = err.message || String(err);
+                        parsed.value = false;
+                        roots.value = [];
+                        manifestConstraints.value = null;
+                        metadataSpecByParent.value = null;
+                    }
+                    if (name) fileLabel.value = name;
+                }
+
+                Vue.watch(
+                    [globalPythonSelected, globalPlatformSelected, globalPlatformMachineSelected],
+                    () => rebuildRoots(),
+                );
+
+                const onFile = (e) => {
+                    const f = e.target.files && e.target.files[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = () => applyLockText(String(reader.result || ''), f.name);
+                    reader.onerror = () => {
+                        parseError.value = 'Could not read file.';
+                        parsed.value = false;
+                    };
+                    reader.readAsText(f, 'utf-8');
+                };
+
+                const onDrop = (e) => {
+                    dragOver.value = false;
+                    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = () => applyLockText(String(reader.result || ''), f.name);
+                    reader.onerror = () => {
+                        parseError.value = 'Could not read file.';
+                        parsed.value = false;
+                    };
+                    reader.readAsText(f, 'utf-8');
+                };
+
+                let simulation = null;
+                let zoomBehavior = null;
+                let fitFn = null;
+                let resetFn = null;
+                let labelStyleFn = null;
+
+                function stopGraph() {
+                    if (simulation) {
+                        simulation.stop();
+                        simulation = null;
+                    }
+                    labelStyleFn = null;
+                    const el = graphHost.value;
+                    if (el) {
+                        el.innerHTML = '';
+                    }
+                    zoomBehavior = null;
+                    fitFn = null;
+                    resetFn = null;
+                }
+
+                function runGraph() {
+                    stopGraph();
+                    const el = graphHost.value;
+                    if (!el || !roots.value.length) return;
+
+                    const { nodes: rawNodes, links: rawLinks } = flattenTreeToGraph(
+                        roots.value,
+                        packageList.value,
+                        manifestConstraints.value,
+                        metadataSpecByParent.value,
+                    );
+                    if (!rawNodes.length) return;
+
+                    const w = el.clientWidth || 800;
+                    const h = el.clientHeight || 480;
+
+                    const nodes = rawNodes.map((n) => ({ ...n }));
+                    const links = rawLinks.map((l) => ({
+                        source: l.source,
+                        target: l.target,
+                        ambiguous: l.ambiguous,
+                        detailFull: l.detailFull,
+                        shortLabel: l.shortLabel,
+                    }));
+
+                    const svg = d3
+                        .select(el)
+                        .append('svg')
+                        .attr('width', '100%')
+                        .attr('height', '100%')
+                        .attr('viewBox', [0, 0, w, h])
+                        .attr('class', 'touch-none');
+
+                    const gRoot = svg.append('g');
+
+                    const zoomed = (event) => {
+                        gRoot.attr('transform', event.transform);
+                    };
+                    zoomBehavior = d3.zoom().scaleExtent([0.15, 8]).on('zoom', zoomed);
+                    svg.call(zoomBehavior);
+
+                    const spread = Math.min(1.35, 1 + nodes.length / 400);
+                    simulation = d3
+                        .forceSimulation(nodes)
+                        .velocityDecay(0.22)
+                        .force(
+                            'link',
+                            d3
+                                .forceLink(links)
+                                .id((d) => d.id)
+                                .distance((d) =>
+                                    (d.ambiguous ? 150 : 120) * spread,
+                                )
+                                .strength(0.2),
+                        )
+                        .force(
+                            'charge',
+                            d3.forceManyBody().strength(-420 * spread),
+                        )
+                        .force('center', d3.forceCenter(w / 2, h / 2))
+                        .force(
+                            'collision',
+                            d3.forceCollide().radius(52 * spread),
+                        );
+
+                    const drag = d3
+                        .drag()
+                        .on('start', (event, d) => {
+                            if (!event.active) simulation.alphaTarget(0.25).restart();
+                            d.fx = d.x;
+                            d.fy = d.y;
+                        })
+                        .on('drag', (event, d) => {
+                            d.fx = event.x;
+                            d.fy = event.y;
+                        })
+                        .on('end', (event, d) => {
+                            if (!event.active) simulation.alphaTarget(0);
+                            d.fx = null;
+                            d.fy = null;
+                        });
+
+                    const linkG = gRoot
+                        .append('g')
+                        .attr('class', 'graph-links')
+                        .selectAll('g')
+                        .data(links)
+                        .join('g');
+
+                    linkG
+                        .append('line')
+                        .attr('stroke', '#6366f1')
+                        .attr('stroke-opacity', 0.55)
+                        .attr('stroke-width', 1.4)
+                        .attr('stroke-dasharray', (d) => (d.ambiguous ? '6 4' : null));
+
+                    linkG.append('title').text((d) => d.detailFull);
+
+                    const edgeLabels = linkG
+                        .append('text')
+                        .attr('font-size', 8)
+                        .attr('fill', '#c4b5fd')
+                        .attr('font-family', 'ui-monospace, monospace')
+                        .attr('text-anchor', 'middle')
+                        .attr('pointer-events', 'none')
+                        .text((d) => d.shortLabel);
+
+                    const node = gRoot
+                        .append('g')
+                        .attr('class', 'graph-nodes')
+                        .selectAll('g')
+                        .data(nodes)
+                        .join('g')
+                        .call(drag);
+
+                    node
+                        .append('circle')
+                        .attr('r', 10)
+                        .attr('fill', (d) => (d.isRoot ? '#2dd4bf' : '#818cf8'))
+                        .attr('stroke', '#312e81')
+                        .attr('stroke-width', 1.5);
+
+                    const labels = node
+                        .append('text')
+                        .attr('text-anchor', 'middle')
+                        .attr('y', 14)
+                        .attr('fill', '#a5b4fc')
+                        .attr('font-family', 'ui-monospace, monospace')
+                        .style('pointer-events', 'none');
+
+                    labels.each(function appendNodeLabel(d) {
+                        const t = d3.select(this);
+                        t.append('tspan')
+                            .attr('x', 0)
+                            .attr('dy', 0)
+                            .attr('font-size', 10)
+                            .text(d.name);
+                        if (d.extrasDisplay && d.extrasDisplay.length) {
+                            t.append('tspan')
+                                .attr('font-size', 9)
+                                .attr('fill', '#a5b4fc')
+                                .text(`[${d.extrasDisplay.join(', ')}]`);
+                        }
+                        t.append('tspan')
+                            .attr('x', 0)
+                            .attr('dy', '1.05em')
+                            .attr('font-size', 8)
+                            .attr('fill', '#94a3b8')
+                            .text(`==${d.version}`);
+                    });
+
+                    node.append('title').text(
+                        (d) => `${pkgLabelWithExtras(d.name, d.extrasDisplay)}==${d.version}`,
+                    );
+
+                    simulation.on('tick', () => {
+                        linkG.each(function tickLink(d) {
+                            const g = d3.select(this);
+                            const sx = d.source.x;
+                            const sy = d.source.y;
+                            const tx = d.target.x;
+                            const ty = d.target.y;
+                            g.select('line')
+                                .attr('x1', sx)
+                                .attr('y1', sy)
+                                .attr('x2', tx)
+                                .attr('y2', ty);
+                            const mx = (sx + tx) / 2;
+                            const my = (sy + ty) / 2;
+                            const dx = tx - sx;
+                            const dy = ty - sy;
+                            const len = Math.hypot(dx, dy) || 1;
+                            const ox = (-dy / len) * 12;
+                            const oy = (dx / len) * 12;
+                            g.select('text').attr('x', mx + ox).attr('y', my + oy);
+                        });
+
+                        node.attr('transform', (d) => `translate(${d.x},${d.y})`);
+                    });
+
+                    const doFit = () => {
+                        const pad = 40;
+                        let xMin = Infinity;
+                        let xMax = -Infinity;
+                        let yMin = Infinity;
+                        let yMax = -Infinity;
+                        for (const d of nodes) {
+                            if (d.x == null || d.y == null) continue;
+                            xMin = Math.min(xMin, d.x);
+                            xMax = Math.max(xMax, d.x);
+                            yMin = Math.min(yMin, d.y);
+                            yMax = Math.max(yMax, d.y);
+                        }
+                        if (!Number.isFinite(xMin)) return;
+                        const bw = xMax - xMin || 1;
+                        const bh = yMax - yMin || 1;
+                        const cw = el.clientWidth || w;
+                        const ch = el.clientHeight || h;
+                        const k = Math.min(cw / (bw + pad * 2), ch / (bh + pad * 2), 2);
+                        const tx = cw / 2 - k * ((xMin + xMax) / 2);
+                        const ty = ch / 2 - k * ((yMin + yMax) / 2);
+                        svg.transition().duration(300).call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
+                    };
+
+                    const doReset = () => {
+                        svg.transition().duration(200).call(zoomBehavior.transform, d3.zoomIdentity);
+                    };
+
+                    fitFn = doFit;
+                    resetFn = doReset;
+
+                    for (let i = 0; i < 280; i += 1) simulation.tick();
+                    doFit();
+
+                    labelStyleFn = () => {
+                        const v = showLabels.value ? 1 : 0;
+                        labels.style('opacity', v);
+                        edgeLabels.style('opacity', v);
+                    };
+                    labelStyleFn();
+                }
+
+                Vue.watch(showLabels, () => {
+                    if (labelStyleFn) labelStyleFn();
+                });
+
+                Vue.watch(
+                    roots,
+                    () => {
+                        Vue.nextTick(() => {
+                            runGraph();
+                        });
+                    },
+                );
+
+                Vue.onMounted(() => {
+                    Vue.nextTick(() => runGraph());
+                });
+
+                Vue.onBeforeUnmount(() => {
+                    stopGraph();
+                });
+
+                const fitGraph = () => {
+                    if (fitFn) fitFn();
+                };
+
+                const resetZoom = () => {
+                    if (resetFn) resetFn();
+                };
+
+                return {
+                    parsed,
+                    parseError,
+                    fileLabel,
+                    metaLines,
+                    metaLine,
+                    roots,
+                    packageList,
+                    onFile,
+                    onDrop,
+                    dragOver,
+                    globalPythonSelected,
+                    globalPlatformSelected,
+                    globalPlatformMachineSelected,
+                    pythonVersionChoices: PYTHON_VERSION_CHOICES,
+                    platformChoices: PLATFORM_CHOICES,
+                    platformMachineChoices: PLATFORM_MACHINE_CHOICES,
+                    graphHost,
+                    graphNodeCount,
+                    graphStats,
+                    showLabels,
+                    fitGraph,
+                    resetZoom,
+                };
+            },
+        };
+
+        Vue.createApp({
+            components: { UvLockGraph },
+        }).mount('#app');
+    </script>
+</body>
+</html>
