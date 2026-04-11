@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>uv.lock dependency tree</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        if (location.protocol === 'https:') {
+            const t = parseInt(location.search.slice(1)) || 0;
+            const n = new Date().getTime();
+            if (n - t > 60 * 5 * 1000) {
+                location.href = location.pathname + '?' + n + location.hash;
+            }
+        }
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-indigo-950 p-2 lg:p-8 lg:px-24 text-gray-300 min-h-screen">
+    <div id="app">
+        <uv-lock-tree></uv-lock-tree>
+    </div>
+    <script type="importmap">{"imports": {
+      "vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.js",
+      "smol-toml": "./vendor/smol-toml-1.6.1/dist/index.js"
+    }}</script>
+
+    <script type="text/x-template" id="uv-tree-node-tpl">
+        <div class="select-none">
+            <div
+                class="flex flex-wrap items-baseline gap-x-2 gap-y-1 py-1.5 border-l-2 border-indigo-600/50 pl-3"
+                :style="indentStyle"
+            >
+                <button
+                    v-if="hasChildren"
+                    type="button"
+                    class="w-5 shrink-0 text-left text-indigo-400 hover:text-indigo-200 text-xs font-mono"
+                    @click="open = !open"
+                    :aria-expanded="open"
+                >
+                    {{ open ? '-' : '+' }}
+                </button>
+                <span v-else class="w-5 shrink-0 inline-block" aria-hidden="true"></span>
+                <span class="font-mono text-indigo-200">{{ node.pkg.name }}</span>
+                <span v-if="dependencyExtrasLabel" class="text-xs font-mono text-indigo-400">[{{ dependencyExtrasLabel }}]</span>
+                <span class="text-gray-500 font-mono text-sm">=={{ node.pkg.version }}</span>
+                <span v-if="sourceHint" class="text-xs text-gray-500 font-mono truncate max-w-[min(100%,28rem)]" :title="sourceHint">{{ sourceHint }}</span>
+            </div>
+            <div v-show="open && hasChildren" class="space-y-1 pb-2">
+                <div
+                    v-for="(edge, idx) in node.edges"
+                    :key="idx"
+                    class="rounded-md border border-indigo-800/40 bg-indigo-950/50 pl-2 pr-2 pt-2 pb-1 ml-2"
+                >
+                    <div
+                        v-if="edgeMetaLine(edge.dep)"
+                        class="text-xs text-gray-600 font-mono break-all mb-1.5 pl-1"
+                    >
+                        {{ edgeMetaLine(edge.dep) }}
+                    </div>
+                    <div v-if="edge.circular" class="text-xs text-amber-400 pl-1 pb-2">Cycle: dependency already on this path.</div>
+                    <div v-else-if="edge.unresolved" class="text-xs text-amber-400 pl-1 pb-2">Not found in lockfile.</div>
+                    <div v-else-if="edge.ambiguous" class="text-xs text-amber-300/90 pl-1 pb-1">Multiple matches; showing one.</div>
+                    <uv-tree-node v-if="edge.child" :node="edge.child" :depth="depth + 1" />
+                </div>
+            </div>
+        </div>
+    </script>
+
+    <script type="text/x-template" id="uv-lock-root-tpl">
+        <div>
+            <h1 class="text-3xl pb-4 font-black">uv.lock dependency tree</h1>
+            <p class="text-sm text-gray-500 max-w-2xl pb-6">
+                Load a <span class="font-mono text-indigo-300/90">uv.lock</span> file. The graph follows
+                <span class="font-mono">dependencies</span> entries in each
+                <span class="font-mono">[[package]]</span> block. Project roots are packages whose
+                <span class="font-mono">source</span> is <span class="font-mono">virtual</span> or <span class="font-mono">editable</span>.
+                Brackets (e.g. <span class="font-mono">pkg[boto3]</span>) reflect extras on the incoming lockfile edge only, not transitive deps.
+                Optional dependencies are filtered using that edge's extras plus environment markers.
+            </p>
+
+            <div class="rounded-lg border border-indigo-800/80 bg-indigo-900/40 p-4 mb-6 max-w-3xl space-y-4">
+                <h2 class="text-lg font-semibold text-indigo-200">Lockfile</h2>
+                <label
+                    class="flex flex-col gap-2 cursor-pointer rounded-md border border-dashed border-indigo-700/60 bg-indigo-950/30 p-4 transition-colors hover:border-indigo-500/50"
+                    :class="dragOver ? 'border-teal-500/70 bg-indigo-900/50' : ''"
+                    @dragover.prevent="dragOver = true"
+                    @dragleave.prevent="dragOver = false"
+                    @drop.prevent="onDrop"
+                >
+                    <span class="text-xs text-gray-500">Choose or drop <span class="font-mono">uv.lock</span></span>
+                    <input
+                        type="file"
+                        accept=".lock,text/plain"
+                        class="text-sm file:mr-3 file:rounded-md file:border-0 file:bg-indigo-700 file:px-3 file:py-1.5 file:text-sm file:text-white hover:file:bg-indigo-600"
+                        @change="onFile"
+                    />
+                </label>
+                <p v-if="fileLabel" class="text-xs font-mono text-indigo-200/90">{{ fileLabel }}</p>
+                <p v-if="parseError" class="text-sm text-amber-400">{{ parseError }}</p>
+                <div v-if="metaLine" class="text-xs text-gray-500 font-mono space-y-1">
+                    <p v-for="(line, i) in metaLines" :key="i">{{ line }}</p>
+                </div>
+            </div>
+
+            <div
+                v-if="parsed && packageList.length"
+                class="rounded-lg border border-indigo-800/80 bg-indigo-900/40 p-4 mb-6 max-w-3xl space-y-4"
+            >
+                <h2 class="text-lg font-semibold text-indigo-200">Environment</h2>
+                <p class="text-xs text-gray-500 pb-2">
+                    Optional filters for <span class="font-mono">python_version</span>,
+                    <span class="font-mono">sys_platform</span>, and
+                    <span class="font-mono">platform_machine</span> in dependency markers. Any = do not filter on that dimension.
+                </p>
+                <fieldset class="min-w-0 border-0 p-0 m-0 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
+                    <label class="flex min-w-0 flex-1 flex-col gap-1">
+                        <span class="text-xs text-gray-500">Platform (<span class="font-mono">sys_platform</span>)</span>
+                        <select
+                            v-model="globalPlatformSelected"
+                            class="w-full max-w-xs rounded-md border border-indigo-700/50 bg-indigo-900 p-2 text-sm font-mono text-indigo-100"
+                        >
+                            <option value="">Any</option>
+                            <option v-for="pl in platformChoices" :key="'env-pl-' + pl" :value="pl">{{ pl }}</option>
+                        </select>
+                    </label>
+                    <label class="flex min-w-0 flex-1 flex-col gap-1">
+                        <span class="text-xs text-gray-500">Python (<span class="font-mono">python_version</span>)</span>
+                        <select
+                            v-model="globalPythonSelected"
+                            class="w-full max-w-xs rounded-md border border-indigo-700/50 bg-indigo-900 p-2 text-sm font-mono text-indigo-100"
+                        >
+                            <option value="">Any</option>
+                            <option v-for="py in pythonVersionChoices" :key="'env-py-' + py" :value="py">{{ py }}</option>
+                        </select>
+                    </label>
+                    <label class="flex min-w-0 flex-1 flex-col gap-1">
+                        <span class="text-xs text-gray-500">Machine (<span class="font-mono">platform_machine</span>)</span>
+                        <select
+                            v-model="globalPlatformMachineSelected"
+                            class="w-full max-w-xs rounded-md border border-indigo-700/50 bg-indigo-900 p-2 text-sm font-mono text-indigo-100"
+                        >
+                            <option value="">Any</option>
+                            <option v-for="m in platformMachineChoices" :key="'env-pm-' + m" :value="m">{{ m }}</option>
+                        </select>
+                    </label>
+                </fieldset>
+            </div>
+
+            <div v-if="roots.length" class="rounded-lg border border-indigo-800/80 bg-indigo-900/20 p-4 space-y-8">
+                <div v-for="(root, ri) in roots" :key="ri">
+                    <h2 class="text-lg font-semibold text-indigo-200 pb-3 border-b border-indigo-800/50 mb-3">
+                        Root: <span class="font-mono text-indigo-100">{{ root.pkg.name }}</span>
+                        <span class="text-gray-500 font-mono text-base">=={{ root.pkg.version }}</span>
+                    </h2>
+                    <uv-tree-node :node="root" :depth="0" />
+                </div>
+            </div>
+            <p v-else-if="parsed && !parseError" class="text-sm text-amber-200/90 max-w-2xl">
+                No project roots found (no <span class="font-mono">source = { virtual = ... }</span> or
+                <span class="font-mono">editable = ...</span>). This file may be from
+                <span class="font-mono">uv pip compile</span> or similar. Add a local package to the lockfile to get a tree, or use another tool for flat locks.
+            </p>
+        </div>
+    </script>
+
+    <script type="module">
+        import * as Vue from 'vue';
+        import { parse } from 'smol-toml';
+
+        function normName(n) {
+            return String(n ?? '').toLowerCase();
+        }
+
+        function pkgKey(p) {
+            return `${normName(p.name)}@${p.version}`;
+        }
+
+        function isProjectRoot(p) {
+            const s = p.source;
+            return s && typeof s === 'object' && ('virtual' in s || 'editable' in s);
+        }
+
+        function formatSource(s) {
+            if (!s || typeof s !== 'object') return '';
+            if (s.registry != null) return `registry ${s.registry}`;
+            if (s.virtual != null) return `virtual ${s.virtual}`;
+            if (s.editable != null) return `editable ${s.editable}`;
+            if (s.git != null) {
+                const g = s.git;
+                if (g && typeof g === 'object' && g.url) return `git ${g.url}`;
+                return `git ${String(g)}`;
+            }
+            if (s.url != null) return `url ${typeof s.url === 'object' && s.url.url ? s.url.url : s.url}`;
+            if (s.path != null) return `path ${s.path}`;
+            if (s.directory != null) return `directory ${s.directory}`;
+            return '';
+        }
+
+        const PYTHON_VERSION_CHOICES = ['3.14', '3.13', '3.12', '3.11', '3.10', '3.9'];
+        const PLATFORM_CHOICES = ['linux', 'darwin', 'win32'];
+        const PLATFORM_MACHINE_CHOICES = [
+            'x86_64',
+            'AMD64',
+            'aarch64',
+            'arm64',
+            'armv7l',
+            'i686',
+            'ppc64le',
+            's390x',
+            'riscv64',
+            'wasm32',
+        ];
+
+        function parsePyVerLabel(label) {
+            const m = String(label).match(/^(\d+)\.(\d+)/);
+            if (!m) return null;
+            return [parseInt(m[1], 10), parseInt(m[2], 10)];
+        }
+
+        function parsePyVerFromMarker(s) {
+            const m = String(s).match(/^(\d+)\.(\d+)(?:\.(\d+))?/);
+            if (!m) return null;
+            return [parseInt(m[1], 10), parseInt(m[2], 10), m[3] ? parseInt(m[3], 10) : 0];
+        }
+
+        function cmpVerTuple(a, b) {
+            for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+                const x = a[i] ?? 0;
+                const y = b[i] ?? 0;
+                if (x < y) return -1;
+                if (x > y) return 1;
+            }
+            return 0;
+        }
+
+        function cmpVerOp(lhs, op, rhs) {
+            const c = cmpVerTuple(lhs, rhs);
+            if (op === '==') return c === 0;
+            if (op === '!=') return c !== 0;
+            if (op === '>') return c > 0;
+            if (op === '<') return c < 0;
+            if (op === '>=') return c >= 0;
+            if (op === '<=') return c <= 0;
+            return true;
+        }
+
+        function evalPythonClause(clause, pyLabel) {
+            if (!pyLabel) return true;
+            const m = clause.match(/python_version\s*(>=|<=|==|!=|>|<)\s*["']([^"']+)["']/i);
+            if (!m) return true;
+            const lhs = parsePyVerLabel(pyLabel);
+            const rhs = parsePyVerFromMarker(m[2]);
+            if (!lhs || !rhs) return true;
+            const lhs3 = [lhs[0], lhs[1], 0];
+            const rhs3 = [rhs[0], rhs[1], rhs[2] ?? 0];
+            return cmpVerOp(lhs3, m[1], rhs3);
+        }
+
+        function evalSysPlatformClause(clause, plat) {
+            if (!plat) return true;
+            const m = clause.match(/sys_platform\s*(==|!=)\s*["']([^"']+)["']/i);
+            if (!m) return true;
+            const want = m[2].toLowerCase();
+            const got = String(plat).toLowerCase();
+            if (m[1] === '==') return want === got;
+            return want !== got;
+        }
+
+        function evalPlatformMachineClause(clause, machine) {
+            if (!machine) return true;
+            const m = clause.match(/platform_machine\s*(==|!=)\s*["']([^"']+)["']/i);
+            if (!m) return true;
+            const want = m[2].toLowerCase();
+            const got = String(machine).toLowerCase();
+            if (m[1] === '==') return want === got;
+            return want !== got;
+        }
+
+        function activeExtrasSet(activeExtras) {
+            if (!activeExtras || !activeExtras.length) return null;
+            return new Set(activeExtras.map((x) => String(x).toLowerCase()));
+        }
+
+        function markerApplies(markerStr, env, activeExtras) {
+            const raw = markerStr != null ? String(markerStr).trim() : '';
+            if (!raw) return true;
+            const exSet = activeExtrasSet(activeExtras);
+            const clauses = raw.split(/\s+and\s+/i).map((x) => x.trim()).filter(Boolean);
+            for (const cl of clauses) {
+                if (/python_version/i.test(cl)) {
+                    if (!env.pythonVersion) continue;
+                    if (!evalPythonClause(cl, env.pythonVersion)) return false;
+                } else if (/sys_platform/i.test(cl)) {
+                    if (!env.sysPlatform) continue;
+                    if (!evalSysPlatformClause(cl, env.sysPlatform)) return false;
+                } else if (/platform_machine/i.test(cl)) {
+                    if (!env.platformMachine) continue;
+                    if (!evalPlatformMachineClause(cl, env.platformMachine)) return false;
+                } else if (/extra\s*==\s*["']([^"']+)["']/i.test(cl)) {
+                    const m = cl.match(/extra\s*==\s*["']([^"']+)["']/i);
+                    if (!m) continue;
+                    if (!exSet) continue;
+                    if (!exSet.has(m[1].toLowerCase())) return false;
+                }
+            }
+            return true;
+        }
+
+        function depExtraApplies(dep, activeExtras) {
+            const ex = dep.extra;
+            if (!ex || !Array.isArray(ex) || ex.length === 0) return true;
+            const exSet = activeExtrasSet(activeExtras);
+            if (!exSet) return true;
+            return ex.some((e) => exSet.has(String(e).toLowerCase()));
+        }
+
+        function edgeMetaLine(dep) {
+            if (dep.marker) return dep.marker;
+            return '';
+        }
+
+        function normalizeDepExtras(ex) {
+            if (ex == null) return null;
+            if (Array.isArray(ex) && ex.length) return ex.map((e) => String(e));
+            return null;
+        }
+
+        function childFilterExtras(parentFilterExtras, dep) {
+            const edge = normalizeDepExtras(dep.extra);
+            if (!edge || !edge.length) return null;
+            if (!parentFilterExtras || !parentFilterExtras.length) return edge;
+            const ps = new Set(parentFilterExtras.map((x) => String(x).toLowerCase()));
+            const narrowed = edge.filter((e) => ps.has(String(e).toLowerCase()));
+            return narrowed.length ? narrowed : edge;
+        }
+
+        function cmpSemver(a, b) {
+            const pa = String(a).split('.').map((x) => parseInt(x, 10) || 0);
+            const pb = String(b).split('.').map((x) => parseInt(x, 10) || 0);
+            const n = Math.max(pa.length, pb.length);
+            for (let i = 0; i < n; i += 1) {
+                const x = pa[i] ?? 0;
+                const y = pb[i] ?? 0;
+                if (x < y) return -1;
+                if (x > y) return 1;
+            }
+            return 0;
+        }
+
+        function resolvePkg(all, dep) {
+            const n = normName(dep.name);
+            const candidates = all.filter((p) => normName(p.name) === n);
+            if (candidates.length === 0) return { pkg: null, ambiguous: false };
+            if (dep.version) {
+                const hit = candidates.find((p) => p.version === dep.version);
+                return { pkg: hit ?? null, ambiguous: false };
+            }
+            if (candidates.length === 1) return { pkg: candidates[0], ambiguous: false };
+            if (dep.source != null) {
+                const want = JSON.stringify(dep.source);
+                const hit = candidates.find((p) => JSON.stringify(p.source) === want);
+                if (hit) return { pkg: hit, ambiguous: false };
+            }
+            const sorted = [...candidates].sort((a, b) => cmpSemver(b.version, a.version));
+            return { pkg: sorted[0], ambiguous: true };
+        }
+
+        function buildNode(pkg, all, stack, env, filterExtras, displayExtras) {
+            const deps = Array.isArray(pkg.dependencies) ? pkg.dependencies : [];
+            const edges = [];
+            for (const dep of deps) {
+                if (!depExtraApplies(dep, filterExtras)) continue;
+                if (dep.marker && !markerApplies(dep.marker, env, filterExtras)) continue;
+                const { pkg: child, ambiguous } = resolvePkg(all, dep);
+                if (!child) {
+                    edges.push({ dep, child: null, unresolved: true, circular: false, ambiguous: false });
+                    continue;
+                }
+                const ck = pkgKey(child);
+                if (stack.has(ck)) {
+                    edges.push({ dep, child: null, unresolved: false, circular: true, ambiguous: false });
+                    continue;
+                }
+                stack.add(ck);
+                const sub = buildNode(
+                    child,
+                    all,
+                    stack,
+                    env,
+                    childFilterExtras(filterExtras, dep),
+                    normalizeDepExtras(dep.extra),
+                );
+                stack.delete(ck);
+                edges.push({ dep, child: sub, unresolved: false, circular: false, ambiguous });
+            }
+            return {
+                pkg,
+                edges,
+                dependencyExtras: displayExtras ?? null,
+            };
+        }
+
+        function collectRoots(packages, env) {
+            const roots = packages.filter(isProjectRoot);
+            return roots.map((p) => buildNode(p, packages, new Set([pkgKey(p)]), env, null, null));
+        }
+
+        const UvTreeNode = {
+            name: 'UvTreeNode',
+            template: '#uv-tree-node-tpl',
+            props: {
+                node: { type: Object, required: true },
+                depth: { type: Number, default: 0 },
+            },
+            setup(props) {
+                const open = Vue.ref(true);
+                const indentStyle = Vue.computed(() => ({
+                    marginLeft: props.depth > 0 ? `${Math.min(props.depth * 10, 120)}px` : '0',
+                }));
+                const sourceHint = Vue.computed(() => formatSource(props.node.pkg.source));
+                const hasChildren = Vue.computed(() => (props.node.edges || []).length > 0);
+                const dependencyExtrasLabel = Vue.computed(() => {
+                    const ex = props.node.dependencyExtras;
+                    if (!ex || !ex.length) return '';
+                    return ex.join(', ');
+                });
+                return { open, indentStyle, sourceHint, hasChildren, edgeMetaLine, dependencyExtrasLabel };
+            },
+        };
+        UvTreeNode.components = { UvTreeNode };
+
+        const UvLockTree = {
+            template: '#uv-lock-root-tpl',
+            components: { UvTreeNode },
+            setup() {
+                const parsed = Vue.ref(false);
+                const parseError = Vue.ref('');
+                const fileLabel = Vue.ref('');
+                const metaLines = Vue.ref([]);
+                const roots = Vue.ref([]);
+                const packageList = Vue.ref([]);
+                const dragOver = Vue.ref(false);
+                const globalPythonSelected = Vue.ref('');
+                const globalPlatformSelected = Vue.ref('');
+                const globalPlatformMachineSelected = Vue.ref('');
+
+                const metaLine = Vue.computed(() => metaLines.value.length > 0);
+
+                function rebuildRoots() {
+                    const pkgs = packageList.value;
+                    if (!pkgs.length) {
+                        roots.value = [];
+                        return;
+                    }
+                    const env = {
+                        pythonVersion: globalPythonSelected.value.trim() || null,
+                        sysPlatform: globalPlatformSelected.value.trim() || null,
+                        platformMachine: globalPlatformMachineSelected.value.trim() || null,
+                    };
+                    roots.value = collectRoots(pkgs, env);
+                }
+
+                function applyLockText(text, name) {
+                    parseError.value = '';
+                    roots.value = [];
+                    packageList.value = [];
+                    metaLines.value = [];
+                    parsed.value = false;
+                    try {
+                        const data = parse(text);
+                        parsed.value = true;
+                        const packages = Array.isArray(data.package) ? data.package : [];
+                        const lines = [];
+                        if (data['requires-python'] != null) {
+                            lines.push(`requires-python: ${data['requires-python']}`);
+                        }
+                        if (data.version != null) lines.push(`lock version: ${data.version}`);
+                        if (data.revision != null) lines.push(`revision: ${data.revision}`);
+                        lines.push(`packages: ${packages.length}`);
+                        metaLines.value = lines;
+                        packageList.value = packages;
+                        rebuildRoots();
+                    } catch (err) {
+                        parseError.value = err.message || String(err);
+                        parsed.value = false;
+                        roots.value = [];
+                    }
+                    if (name) fileLabel.value = name;
+                }
+
+                Vue.watch(
+                    [globalPythonSelected, globalPlatformSelected, globalPlatformMachineSelected],
+                    () => rebuildRoots(),
+                );
+
+                const onFile = (e) => {
+                    const f = e.target.files && e.target.files[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = () => applyLockText(String(reader.result || ''), f.name);
+                    reader.onerror = () => {
+                        parseError.value = 'Could not read file.';
+                        parsed.value = false;
+                    };
+                    reader.readAsText(f, 'utf-8');
+                };
+
+                const onDrop = (e) => {
+                    dragOver.value = false;
+                    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = () => applyLockText(String(reader.result || ''), f.name);
+                    reader.onerror = () => {
+                        parseError.value = 'Could not read file.';
+                        parsed.value = false;
+                    };
+                    reader.readAsText(f, 'utf-8');
+                };
+
+                return {
+                    parsed,
+                    parseError,
+                    fileLabel,
+                    metaLines,
+                    metaLine,
+                    roots,
+                    packageList,
+                    onFile,
+                    onDrop,
+                    dragOver,
+                    globalPythonSelected,
+                    globalPlatformSelected,
+                    globalPlatformMachineSelected,
+                    pythonVersionChoices: PYTHON_VERSION_CHOICES,
+                    platformChoices: PLATFORM_CHOICES,
+                    platformMachineChoices: PLATFORM_MACHINE_CHOICES,
+                };
+            },
+        };
+
+        Vue.createApp({
+            components: { UvLockTree },
+        }).mount('#app');
+    </script>
+</body>
+</html>

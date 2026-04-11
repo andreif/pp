@@ -68,7 +68,11 @@
 
             <div class="rounded-lg border border-indigo-800/80 bg-indigo-900/40 p-4 mb-6 max-w-3xl space-y-4">
                 <h2 class="text-lg font-semibold text-indigo-200">Environment</h2>
-                <p class="text-xs text-gray-500 pb-2">Used for marker filtering when loading dependencies and when adding packages to the tree.</p>
+                <p class="text-xs text-gray-500 pb-2">
+                    Used for marker filtering (<span class="font-mono">python_version</span>,
+                    <span class="font-mono">sys_platform</span>,
+                    <span class="font-mono">platform_machine</span>) when loading dependencies and when adding packages to the tree.
+                </p>
                 <fieldset
                     :disabled="!packagesReady"
                     class="min-w-0 border-0 p-0 m-0 disabled:opacity-60"
@@ -95,6 +99,17 @@
                             <option v-for="py in pythonVersionChoices" :key="'env-py-' + py" :value="py">{{ py }}</option>
                         </select>
                         <p class="text-xs text-gray-600">Any = do not filter on python_version markers.</p>
+                    </label>
+                    <label class="flex min-w-0 flex-1 flex-col gap-1">
+                        <span class="text-xs text-gray-500">Machine (platform_machine)</span>
+                        <select
+                            v-model="globalPlatformMachineSelected"
+                            class="w-full max-w-xs rounded-md border border-indigo-700/50 bg-indigo-900 p-2 text-sm font-mono text-indigo-100 disabled:cursor-not-allowed"
+                        >
+                            <option value="">Any (no platform_machine filter)</option>
+                            <option v-for="m in platformMachineChoices" :key="'env-pm-' + m" :value="m">{{ m }}</option>
+                        </select>
+                        <p class="text-xs text-gray-600">Any = do not filter on platform_machine markers.</p>
                     </label>
                 </div>
                 </fieldset>
@@ -171,6 +186,7 @@
                 <span class="text-gray-500 font-mono text-sm">=={{ node.version }}</span>
                 <span v-if="node.extras.length" class="text-xs text-indigo-400">[{{ node.extras.join(', ') }}]</span>
                 <span v-if="node.platforms?.length" class="text-xs text-gray-500">{{ node.platforms.join(', ') }}</span>
+                <span v-if="node.platformMachines?.length" class="text-xs text-gray-500">{{ node.platformMachines.join(', ') }}</span>
                 <span v-if="node.pythonVersions?.length" class="text-xs text-gray-500">py {{ node.pythonVersions.join(', ') }}</span>
                 <button v-if="!node.loaded" type="button" @click="loadSelf"
                     class="text-xs rounded bg-indigo-700 hover:bg-indigo-600 px-2 py-0.5">Load deps</button>
@@ -260,6 +276,18 @@
 
         const PYTHON_VERSION_CHOICES = ['3.14', '3.13', '3.12', '3.11', '3.10', '3.9'];
         const PLATFORM_CHOICES = ['linux', 'darwin', 'win32'];
+        const PLATFORM_MACHINE_CHOICES = [
+            'x86_64',
+            'AMD64',
+            'aarch64',
+            'arm64',
+            'armv7l',
+            'i686',
+            'ppc64le',
+            's390x',
+            'riscv64',
+            'wasm32',
+        ];
 
         function parsePyVerLabel(label) {
             const m = String(label).match(/^(\d+)\.(\d+)/);
@@ -325,30 +353,51 @@
             return want !== got;
         }
 
-        function requirementAppliesForEnv(markers, pythonVersions, platforms) {
+        function evalPlatformMachineClause(clause, machine) {
+            if (!machine) return true;
+            const m = clause.match(/platform_machine\s*(==|!=)\s*["']([^"']+)["']/i);
+            if (!m) return true;
+            const want = m[2].toLowerCase();
+            const got = String(machine).toLowerCase();
+            if (m[1] === '==') return want === got;
+            return want !== got;
+        }
+
+        function requirementAppliesForEnv(markers, pythonVersions, platforms, machines) {
             const clauses = flattenMarkerClauses(markers);
             const pyClauses = clauses.filter((c) => /python_version/i.test(c));
             const plClauses = clauses.filter((c) => /sys_platform/i.test(c));
-            if (pyClauses.length === 0 && plClauses.length === 0) return true;
+            const pmClauses = clauses.filter((c) => /platform_machine/i.test(c));
+            if (pyClauses.length === 0 && plClauses.length === 0 && pmClauses.length === 0) return true;
             const pyList = pythonVersions.length ? pythonVersions : [null];
             const platList = platforms.length ? platforms : [null];
+            const machList = machines.length ? machines : [null];
             for (const py of pyList) {
                 for (const plat of platList) {
-                    let ok = true;
-                    for (const cl of pyClauses) {
-                        if (!evalPythonClause(cl, py)) {
-                            ok = false;
-                            break;
+                    for (const mach of machList) {
+                        let ok = true;
+                        for (const cl of pyClauses) {
+                            if (!evalPythonClause(cl, py)) {
+                                ok = false;
+                                break;
+                            }
                         }
-                    }
-                    if (!ok) continue;
-                    for (const cl of plClauses) {
-                        if (!evalPlatformClause(cl, plat)) {
-                            ok = false;
-                            break;
+                        if (!ok) continue;
+                        for (const cl of plClauses) {
+                            if (!evalPlatformClause(cl, plat)) {
+                                ok = false;
+                                break;
+                            }
                         }
+                        if (!ok) continue;
+                        for (const cl of pmClauses) {
+                            if (!evalPlatformMachineClause(cl, mach)) {
+                                ok = false;
+                                break;
+                            }
+                        }
+                        if (ok) return true;
                     }
-                    if (ok) return true;
                 }
             }
             return false;
@@ -377,14 +426,14 @@
             return extraMarkers.some((e) => set.has(e.toLowerCase()));
         }
 
-        function filterRequiresDist(requiresDist, selectedExtras, pythonVersions, platforms) {
+        function filterRequiresDist(requiresDist, selectedExtras, pythonVersions, platforms, machines) {
             if (!requiresDist || !requiresDist.length) return [];
             const out = [];
             for (const line of requiresDist) {
                 const { main, markers } = splitRequirementLine(line);
                 if (!main) continue;
                 if (!requirementAppliesForExtras(markers, selectedExtras)) continue;
-                if (!requirementAppliesForEnv(markers, pythonVersions, platforms)) continue;
+                if (!requirementAppliesForEnv(markers, pythonVersions, platforms, machines)) continue;
                 out.push(line);
             }
             return out;
@@ -757,7 +806,7 @@
             return `n-${idSeq}`;
         }
 
-        function createEmptyNode(name, version, extras, pythonVersions, platforms) {
+        function createEmptyNode(name, version, extras, pythonVersions, platforms, platformMachines) {
             return {
                 id: nextId(),
                 name,
@@ -765,6 +814,7 @@
                 extras,
                 pythonVersions: pythonVersions ?? [],
                 platforms: platforms ?? [],
+                platformMachines: platformMachines ?? [],
                 loaded: false,
                 loading: false,
                 fetchError: null,
@@ -791,6 +841,7 @@
                     n.extras,
                     n.pythonVersions || [],
                     n.platforms || [],
+                    n.platformMachines || [],
                 );
                 v2log(
                     'loadDepsIntoNode filterRequiresDist',
@@ -841,6 +892,7 @@
             setup(props) {
                 const globalPythonSelected = Vue.inject('globalPythonSelected');
                 const globalPlatformSelected = Vue.inject('globalPlatformSelected');
+                const globalPlatformMachineSelected = Vue.inject('globalPlatformMachineSelected');
 
                 const indentStyle = Vue.computed(() => ({
                     marginLeft: props.depth > 0 ? `${Math.min(props.depth * 12, 96)}px` : '0',
@@ -865,6 +917,7 @@
                         extras,
                         envChoiceToList(globalPythonSelected.value),
                         envChoiceToList(globalPlatformSelected.value),
+                        envChoiceToList(globalPlatformMachineSelected.value),
                     );
                     props.node.children.push(child);
                     await Vue.nextTick();
@@ -950,9 +1003,11 @@
                 const rootExtrasSelected = Vue.ref([]);
                 const globalPythonSelected = Vue.ref('');
                 const globalPlatformSelected = Vue.ref('');
+                const globalPlatformMachineSelected = Vue.ref('');
 
                 Vue.provide('globalPythonSelected', globalPythonSelected);
                 Vue.provide('globalPlatformSelected', globalPlatformSelected);
+                Vue.provide('globalPlatformMachineSelected', globalPlatformMachineSelected);
 
                 Vue.onMounted(async () => {
                     try {
@@ -1049,6 +1104,7 @@
                         uniqueStrings(rootExtrasSelected.value),
                         envChoiceToList(globalPythonSelected.value),
                         envChoiceToList(globalPlatformSelected.value),
+                        envChoiceToList(globalPlatformMachineSelected.value),
                     );
                     v2log('loadRoot createEmptyNode', 'node.id=' + node.id);
                     rootNode.value = node;
@@ -1097,8 +1153,10 @@
                     rootExtrasSelected,
                     globalPythonSelected,
                     globalPlatformSelected,
+                    globalPlatformMachineSelected,
                     pythonVersionChoices: PYTHON_VERSION_CHOICES,
                     platformChoices: PLATFORM_CHOICES,
+                    platformMachineChoices: PLATFORM_MACHINE_CHOICES,
                 };
             },
         };
