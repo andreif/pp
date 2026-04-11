@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>uv.lock root dependencies</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        if (location.protocol === 'https:') {
+            const t = parseInt(location.search.slice(1)) || 0;
+            const n = new Date().getTime();
+            if (n - t > 60 * 5 * 1000) {
+                location.href = location.pathname + '?' + n + location.hash;
+            }
+        }
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 p-2 lg:p-8 lg:px-24 text-gray-300 min-h-screen">
+    <div id="app">
+        <uv-lock-roots></uv-lock-roots>
+    </div>
+    <script type="importmap">{"imports": {
+      "vue": "https://cdn.jsdelivr.net/npm/vue@3/dist/vue.esm-browser.js",
+      "smol-toml": "./vendor/smol-toml-1.6.1/dist/index.js"
+    }}</script>
+
+    <script type="text/x-template" id="uv-roots-tpl">
+        <div>
+            <h1 class="text-3xl pb-4 font-black">uv.lock root dependencies</h1>
+            <p class="text-sm text-gray-500 max-w-2xl pb-6">
+                Load a <span class="font-mono text-sky-300/90">uv.lock</span> file. Project roots
+                (<span class="font-mono">source.virtual</span> / <span class="font-mono">source.editable</span>) share
+                collapsed tables: each row is one dependency edge (name, extras, marker); the
+                <span class="font-mono">Roots</span> column lists emoji aliases (see legend) for every root that declares
+                it. Subdependencies below are also collapsed per package. Direct dependencies use
+                <span class="font-mono">requires-dist</span> / <span class="font-mono">requires-dev</span>
+                specifiers and <span class="font-mono">[manifest].constraints</span> entries, plus the
+                resolved version chosen in the lockfile. Resolved PyPI releases are checked against
+                <a class="text-sky-400 underline decoration-sky-500/50 hover:text-sky-300" href="https://osv.dev/" target="_blank" rel="noopener">OSV</a>
+                (CVE and other advisory IDs when known).
+                Packages with <span class="font-mono">source.editable</span> or <span class="font-mono">source.virtual</span>
+                (not PyPI) are marked
+                <span class="rounded border border-violet-500/45 bg-violet-950/40 px-1 py-px text-[10px] font-sans font-semibold uppercase text-violet-300/90">workspace</span>; hover for the path.
+                Subdependencies (below) list transitive packages (collapsed per resolved package), with
+                <span class="font-mono">Needed by</span> across roots.
+                For a uv monorepo, the lockfile lists <span class="font-mono">[manifest].members</span> and multiple
+                virtual/editable roots (one per package in the workspace); an example is
+                <span class="font-mono">workspace-uv.lock</span> in this repo.
+            </p>
+
+            <div class="rounded-lg border border-slate-700/80 bg-slate-900/40 p-4 mb-6 max-w-3xl space-y-4">
+                <h2 class="text-lg font-semibold text-sky-200">Lockfile</h2>
+                <label
+                    class="flex flex-col gap-2 cursor-pointer rounded-md border border-dashed border-slate-600/60 bg-slate-950/30 p-4 transition-colors hover:border-sky-500/50"
+                    :class="dragOver ? 'border-teal-500/70 bg-slate-800/50' : ''"
+                    @dragover.prevent="dragOver = true"
+                    @dragleave.prevent="dragOver = false"
+                    @drop.prevent="onDrop"
+                >
+                    <span class="text-xs text-gray-500">Choose or drop <span class="font-mono">uv.lock</span></span>
+                    <input
+                        type="file"
+                        accept=".lock,text/plain"
+                        class="text-sm file:mr-3 file:rounded-md file:border-0 file:bg-sky-700 file:px-3 file:py-1.5 file:text-sm file:text-white hover:file:bg-sky-600"
+                        @change="onFile"
+                    />
+                </label>
+                <p v-if="fileLabel" class="text-xs font-mono text-sky-200/90">{{ fileLabel }}</p>
+                <p v-if="parseError" class="text-sm text-amber-400">{{ parseError }}</p>
+                <div v-if="metaLine" class="text-xs text-gray-500 font-mono space-y-1">
+                    <p v-for="(line, i) in metaLines" :key="i">{{ line }}</p>
+                </div>
+                <p v-if="osvScanning" class="text-xs text-sky-400/90">Checking PyPI versions against OSV...</p>
+                <p v-if="osvScanError" class="text-sm text-amber-400/90">{{ osvScanError }}</p>
+            </div>
+
+            <p v-if="parsed && !parseError && projectRootsCount === 0" class="text-sm text-amber-200/90 max-w-2xl">
+                No project roots found (no <span class="font-mono">source = { virtual = ... }</span> or
+                <span class="font-mono">editable = ...</span>).
+            </p>
+
+            <div
+                v-if="parsed && !parseError && workspaceAliases.length"
+                class="mb-6 max-w-4xl rounded-lg border border-slate-700/80 bg-slate-900/35 p-4"
+            >
+                <h2 class="text-lg font-semibold text-teal-200/95 mb-2">Workspace roots</h2>
+                <p class="text-xs text-gray-500 mb-3">
+                    Tables below use these emoji instead of full paths. Hover an emoji in a row for the path and root.
+                </p>
+                <div
+                    class="grid w-full max-w-3xl gap-x-4 gap-y-2 text-sm [grid-template-columns:2.25rem_minmax(0,1fr)_minmax(0,1fr)] items-center"
+                >
+                    <template v-for="a in workspaceAliases" :key="a.key">
+                        <span class="justify-self-center text-xl leading-none" aria-hidden="true">{{ a.emoji }}</span>
+                        <span class="min-w-0 truncate font-mono text-sky-200/90" :title="a.workspace">{{ a.workspace }}</span>
+                        <span class="min-w-0 truncate font-mono text-xs text-gray-600" :title="a.rootTitle">{{ a.rootTitle }}</span>
+                    </template>
+                </div>
+            </div>
+
+            <div v-if="parsed && !parseError && projectRootsCount > 0" class="mb-10">
+                <h2 class="text-xl font-semibold text-teal-200/95 mb-1">Direct dependencies</h2>
+                <p v-if="!rootGroups.length" class="text-sm text-gray-500 mb-4">No direct dependencies on any root.</p>
+                <div v-for="g in rootGroups" :key="g.label" class="mb-6">
+                    <h3 class="text-sm font-medium text-sky-200/90 mb-2">{{ g.label }}</h3>
+                    <div class="overflow-x-auto rounded-lg border border-slate-700/80">
+                        <table class="w-full min-w-[72rem] text-sm border-collapse">
+                            <thead>
+                                <tr class="border-b border-slate-700/80 bg-slate-900/60 text-left text-xs text-gray-500 uppercase tracking-wide">
+                                    <th class="px-3 py-2 font-medium">Roots</th>
+                                    <th class="px-3 py-2 font-medium">Package</th>
+                                    <th class="px-3 py-2 font-medium">Specifier</th>
+                                    <th class="px-3 py-2 font-medium">Manifest constraints</th>
+                                    <th class="px-3 py-2 font-medium">Resolved</th>
+                                    <th class="px-3 py-2 font-medium">Vulnerabilities</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr
+                                    v-for="row in g.rows"
+                                    :key="row.key"
+                                    class="border-b border-slate-800/80 hover:bg-slate-900/40"
+                                >
+                                    <td class="px-3 py-2 align-top">
+                                        <div class="flex flex-wrap gap-1.5">
+                                            <span
+                                                v-for="(wr, i) in row.workspaceRoots"
+                                                :key="i"
+                                                class="cursor-default text-xl leading-none select-none"
+                                                :title="wr.workspace + ' - ' + wr.rootTitle"
+                                                role="img"
+                                                :aria-label="wr.workspace + ' ' + wr.rootTitle"
+                                            >{{ wr.emoji }}</span>
+                                        </div>
+                                    </td>
+                                    <td class="px-3 py-2 font-mono text-sky-100/95 align-top">
+                                        {{ row.name }}
+                                        <span v-if="row.extrasLabel" class="text-cyan-400/90">{{ row.extrasLabel }}</span>
+                                        <span
+                                            v-if="row.localSourceLabel"
+                                            class="ml-1.5 inline align-middle rounded border border-violet-500/45 bg-violet-950/40 px-1.5 py-px text-[10px] font-sans font-semibold uppercase tracking-wide text-violet-300/90"
+                                            :title="row.localSourceLabel"
+                                        >workspace</span>
+                                        <span v-if="row.markerShort" class="text-gray-500 text-xs block mt-0.5">{{ row.markerShort }}</span>
+                                    </td>
+                                    <td class="px-3 py-2 font-mono text-gray-300/95 align-top whitespace-pre-wrap break-words">{{ row.specifier || '-' }}</td>
+                                    <td
+                                        class="px-3 py-2 font-mono align-top whitespace-pre-wrap break-words"
+                                        :class="row.manifestConstraints ? 'text-amber-200/85' : 'text-gray-300/95'"
+                                    >{{ row.manifestConstraints || '-' }}</td>
+                                    <td class="px-3 py-2 font-mono align-top">
+                                        <span v-if="row.resolved">{{ row.resolved }}</span>
+                                        <span v-else class="text-amber-400/90">unresolved</span>
+                                        <span v-if="row.ambiguous" class="text-gray-500 text-xs ml-1" title="Multiple versions in lock; highest semver chosen">*</span>
+                                    </td>
+                                    <td class="px-3 py-2 align-top text-xs">
+                                        <template v-if="row.osvEligible">
+                                            <span v-if="osvScanning" class="text-sky-400/90">...</span>
+                                            <span v-else-if="osvScanError" class="text-gray-600">-</span>
+                                            <template v-else-if="vulnIdsForRow(row)?.length">
+                                                <span :class="vulnSeverityClass(vulnMaxForRow(row))" class="font-mono break-all">
+                                                    {{ vulnIdsForRow(row).join(', ') }}
+                                                </span>
+                                                <span
+                                                    v-if="vulnMaxForRow(row) != null"
+                                                    class="text-gray-500 block mt-0.5"
+                                                >
+                                                    max severity ~{{ vulnMaxForRow(row).toFixed(1) }}/10
+                                                </span>
+                                                <span v-if="hasCveId(vulnIdsForRow(row))" class="text-gray-400 block mt-0.5">includes CVE</span>
+                                                <a
+                                                    :href="osvPyPIListUrl(row.name)"
+                                                    class="text-sky-400/90 underline decoration-sky-500/40 hover:text-sky-300 mt-0.5 inline-block"
+                                                    target="_blank"
+                                                    rel="noopener"
+                                                >osv.dev</a>
+                                            </template>
+                                            <span v-else class="text-gray-600">-</span>
+                                        </template>
+                                        <span v-else class="text-gray-600">-</span>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="parsed && !parseError && subdependencyRows.length" class="mb-10">
+                <h2 class="text-xl font-semibold text-teal-200/95 mb-1">Subdependencies</h2>
+                <p class="text-sm text-gray-500 max-w-3xl mb-4">
+                    Each row is one resolved transitive package (same name and version as in the lockfile). If several
+                    workspace roots pull it in, their emoji aliases (see above) are listed in the first column. Direct
+                    dependencies of each root are excluded. <span class="font-mono">Needed by</span> unions parents from
+                    every such tree.
+                </p>
+                <div class="overflow-x-auto rounded-lg border border-slate-700/80">
+                    <table class="w-full min-w-[72rem] text-sm border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-700/80 bg-slate-900/60 text-left text-xs text-gray-500 uppercase tracking-wide">
+                                <th class="px-3 py-2 font-medium">Roots</th>
+                                <th class="px-3 py-2 font-medium">Package</th>
+                                <th class="px-3 py-2 font-medium">Specifier</th>
+                                <th class="px-3 py-2 font-medium">Manifest constraints</th>
+                                <th class="px-3 py-2 font-medium">Resolved</th>
+                                <th class="px-3 py-2 font-medium">Needed by</th>
+                                <th class="px-3 py-2 font-medium">Vulnerabilities</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr
+                                v-for="row in subdependencyRows"
+                                :key="row.key"
+                                class="border-b border-slate-800/80 hover:bg-slate-900/40"
+                            >
+                                <td class="max-w-[16rem] px-3 py-2 align-top">
+                                    <div
+                                        class="flex flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden whitespace-nowrap leading-none [scrollbar-color:rgba(100,116,139,0.45)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-500/50"
+                                    >
+                                        <span
+                                            v-for="(wr, i) in row.workspaceRoots"
+                                            :key="i"
+                                            class="inline-flex shrink-0 cursor-default select-none items-center text-xl leading-none"
+                                            :title="wr.workspace + ' - ' + wr.rootTitle"
+                                            role="img"
+                                            :aria-label="wr.workspace + ' ' + wr.rootTitle"
+                                        >{{ wr.emoji }}</span>
+                                    </div>
+                                </td>
+                                <td class="px-3 py-2 font-mono text-sky-100/95 align-top">
+                                    {{ row.packageName }}
+                                    <span
+                                        v-if="row.localSourceLabel"
+                                        class="ml-1.5 inline align-middle rounded border border-violet-500/45 bg-violet-950/40 px-1.5 py-px text-[10px] font-sans font-semibold uppercase tracking-wide text-violet-300/90"
+                                        :title="row.localSourceLabel"
+                                    >workspace</span>
+                                </td>
+                                <td class="px-3 py-2 font-mono text-gray-300/95 align-top whitespace-pre-wrap break-words">{{ row.specifier || '-' }}</td>
+                                <td
+                                    class="px-3 py-2 font-mono align-top whitespace-pre-wrap break-words"
+                                    :class="row.manifestConstraints ? 'text-amber-200/85' : 'text-gray-300/95'"
+                                >{{ row.manifestConstraints || '-' }}</td>
+                                <td class="px-3 py-2 font-mono text-gray-300/95 align-top">{{ row.packageVersion }}</td>
+                                <td class="px-3 py-2 font-mono text-gray-400/95 align-top whitespace-pre-wrap break-words">{{ row.neededBy }}</td>
+                                <td class="px-3 py-2 align-top text-xs">
+                                    <template v-if="row.osvEligible">
+                                        <span v-if="osvScanning" class="text-sky-400/90">...</span>
+                                        <span v-else-if="osvScanError" class="text-gray-600">-</span>
+                                        <template v-else-if="vulnIdsForRow(row)?.length">
+                                            <span :class="vulnSeverityClass(vulnMaxForRow(row))" class="font-mono break-all">
+                                                {{ vulnIdsForRow(row).join(', ') }}
+                                            </span>
+                                            <span
+                                                v-if="vulnMaxForRow(row) != null"
+                                                class="text-gray-500 block mt-0.5"
+                                            >
+                                                max severity ~{{ vulnMaxForRow(row).toFixed(1) }}/10
+                                            </span>
+                                            <span v-if="hasCveId(vulnIdsForRow(row))" class="text-gray-400 block mt-0.5">includes CVE</span>
+                                            <a
+                                                :href="osvPyPIListUrl(row.packageName)"
+                                                class="text-sky-400/90 underline decoration-sky-500/40 hover:text-sky-300 mt-0.5 inline-block"
+                                                target="_blank"
+                                                rel="noopener"
+                                            >osv.dev</a>
+                                        </template>
+                                        <span v-else class="text-gray-600">-</span>
+                                    </template>
+                                    <span v-else class="text-gray-600">-</span>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </script>
+
+    <script type="module">
+        import * as Vue from 'vue';
+        import { parse } from 'smol-toml';
+
+        function normName(n) {
+            return String(n ?? '').toLowerCase();
+        }
+
+        function pkgKey(p) {
+            return `${normName(p.name)}@${p.version}`;
+        }
+
+        function wrKey(workspace, rootTitle) {
+            return `${workspace}\0${rootTitle}`;
+        }
+
+        const WORKSPACE_EMOJI_POOL = [
+            ...new Set([
+                '🔵', '🟢', '🟡', '🟠', '🔴', '🟣', '🟤', '⚫', '⚪', '🟦', '🟩', '🟨', '🟧', '🟥', '🟪', '🟫',
+                '⬛', '⬜', '🔷', '🔶', '🔹', '🔸', '🔺', '🔻', '💠', '🔘', '🔳', '🔲', '⭐', '🌟', '✨', '💫',
+                '☀', '🌤', '⛅', '🌥', '☁', '⛈', '🌧', '🌨', '❄', '☃', '⛄', '⚡', '💧', '🔥', '🌊',
+                '🍀', '🌿', '🌱', '🌲', '🌳', '🌴', '🌵', '🍎', '🍊', '🍋', '🍌', '🍇', '🍓', '🫐', '🍒', '🍑',
+                '🥝', '🍅', '🥦', '🥕', '🌽', '🌶', '🧄', '🧅', '🥔', '🥐', '🍞', '🥖', '🥨', '🧀', '🍳', '🥚',
+                '🧇', '🍯', '🎪', '🎨', '🎭', '🎬', '🎮', '🎯', '🎲', '🧩', '🪀', '🪁', '🪂', '🧸', '🦀', '🦞',
+                '🦐', '🦑', '🦪', '🐙', '🐚', '🐠', '🐟', '🐡', '🐬', '🐳', '🐋', '🦈', '🐊', '🐅', '🐆', '🦓',
+                '🦍', '🦧', '🐘', '🦛', '🦏', '🐪', '🐫', '🦒', '🦘', '🦬', '🐃', '🐂', '🐄', '🐎', '🐖', '🐗',
+                '🐏', '🐑', '🐐', '🐓', '🦃', '🦤', '🦚', '🦜', '🦢', '🦩', '🕊', '🐇', '🦝', '🦨', '🦡', '🦦',
+                '🦥', '🐁', '🐀', '🐿', '🦔', '🐉', '🐲', '🎄', '🎍', '🎋', '🎃', '🎁', '🔔',
+            ]),
+        ];
+
+        function assignWorkspaceAliases(rootGroups, subdependencyRows) {
+            const seen = new Set();
+            const pairs = [];
+            function add(wr) {
+                const k = wrKey(wr.workspace, wr.rootTitle);
+                if (seen.has(k)) return;
+                seen.add(k);
+                pairs.push({ workspace: wr.workspace, rootTitle: wr.rootTitle, key: k });
+            }
+            for (const g of rootGroups) {
+                for (const row of g.rows) {
+                    for (const wr of row.workspaceRoots) add(wr);
+                }
+            }
+            for (const row of subdependencyRows) {
+                for (const wr of row.workspaceRoots) add(wr);
+            }
+            pairs.sort((a, b) => {
+                const w = a.workspace.localeCompare(b.workspace);
+                if (w !== 0) return w;
+                return a.rootTitle.localeCompare(b.rootTitle);
+            });
+            const aliases = pairs.map((p, i) => ({
+                ...p,
+                emoji: WORKSPACE_EMOJI_POOL[i % WORKSPACE_EMOJI_POOL.length],
+            }));
+            const emojiByKey = new Map(aliases.map((a) => [a.key, a.emoji]));
+            function enrich(wr) {
+                return {
+                    ...wr,
+                    emoji: emojiByKey.get(wrKey(wr.workspace, wr.rootTitle)) ?? '?',
+                };
+            }
+            for (const g of rootGroups) {
+                for (const row of g.rows) {
+                    row.workspaceRoots = row.workspaceRoots.map(enrich);
+                }
+            }
+            for (const row of subdependencyRows) {
+                row.workspaceRoots = row.workspaceRoots.map(enrich);
+            }
+            return aliases;
+        }
+
+        function isProjectRoot(p) {
+            const s = p.source;
+            return s && typeof s === 'object' && ('virtual' in s || 'editable' in s);
+        }
+
+        function formatSource(s) {
+            if (!s || typeof s !== 'object') return '';
+            if (s.registry != null) return String(s.registry);
+            if (s.virtual != null) return `virtual ${s.virtual}`;
+            if (s.editable != null) return `editable ${s.editable}`;
+            return '';
+        }
+
+        function localPackageLabel(p) {
+            if (!p || !p.source || typeof p.source !== 'object') return null;
+            if (p.source.registry != null) return null;
+            const t = formatSource(p.source);
+            return t || null;
+        }
+
+        function workspaceLabelFromRoot(root) {
+            const s = root.source;
+            if (!s || typeof s !== 'object') return String(root.name ?? '');
+            if (s.virtual != null) return String(s.virtual);
+            if (s.editable != null) return String(s.editable);
+            return String(root.name ?? '');
+        }
+
+        function buildForwardChildKeys(allPackages) {
+            const forward = new Map();
+            for (const p of allPackages) {
+                const pk = pkgKey(p);
+                const children = [];
+                const deps = Array.isArray(p.dependencies) ? p.dependencies : [];
+                for (const dep of deps) {
+                    const { pkg: child } = resolvePkg(allPackages, dep);
+                    if (child) children.push(pkgKey(child));
+                }
+                forward.set(pk, children);
+            }
+            return forward;
+        }
+
+        function buildReverseParents(forward) {
+            const rev = new Map();
+            for (const [parentKey, childKeys] of forward) {
+                for (const ck of childKeys) {
+                    if (!rev.has(ck)) rev.set(ck, new Set());
+                    rev.get(ck).add(parentKey);
+                }
+            }
+            return rev;
+        }
+
+        function reachableFrom(startKey, forward) {
+            const seen = new Set();
+            const stack = [startKey];
+            seen.add(startKey);
+            while (stack.length) {
+                const k = stack.pop();
+                for (const c of forward.get(k) || []) {
+                    if (!seen.has(c)) {
+                        seen.add(c);
+                        stack.push(c);
+                    }
+                }
+            }
+            return seen;
+        }
+
+        function directDepKeysForRoot(root, allPackages) {
+            const keys = new Set();
+            for (const dep of root.dependencies || []) {
+                const { pkg } = resolvePkg(allPackages, dep);
+                if (pkg) keys.add(pkgKey(pkg));
+            }
+            for (const dep of devDepsArray(root)) {
+                const { pkg } = resolvePkg(allPackages, dep);
+                if (pkg) keys.add(pkgKey(pkg));
+            }
+            return keys;
+        }
+
+        function buildSubdependencyRows(allPackages, roots, manifestMap, byParentSpecs) {
+            if (!Array.isArray(roots) || !roots.length) return [];
+            const forward = buildForwardChildKeys(allPackages);
+            const reverse = buildReverseParents(forward);
+            const keyToPkg = new Map(allPackages.map((p) => [pkgKey(p), p]));
+            const bySubKey = new Map();
+            for (const root of roots) {
+                const rk = pkgKey(root);
+                const reachable = reachableFrom(rk, forward);
+                const direct = directDepKeysForRoot(root, allPackages);
+                const workspace = workspaceLabelFromRoot(root);
+                const rootTitle = `${root.name}@${root.version}`;
+                for (const subKey of reachable) {
+                    if (subKey === rk || direct.has(subKey)) continue;
+                    const sp = keyToPkg.get(subKey);
+                    const pkgName = sp ? sp.name : subKey.split('@')[0] || subKey;
+                    const parents = reverse.get(subKey);
+                    const parentLabels = [];
+                    const specParts = [];
+                    if (parents) {
+                        for (const pk of parents) {
+                            if (!reachable.has(pk)) continue;
+                            const pp = keyToPkg.get(pk);
+                            if (!pp) continue;
+                            parentLabels.push(`${pp.name}@${pp.version}`);
+                            const spec = metadataSpecifierForDependency(pkgName, pp, byParentSpecs);
+                            if (spec) specParts.push(spec);
+                        }
+                    }
+                    const manifestConstraints = manifestSpecifiersFor(pkgName, manifestMap);
+                    const osvEligible = Boolean(sp && isOsvPyPI(sp));
+                    const osvPkgId = osvEligible && sp ? pkgKey(sp) : null;
+                    const localSourceLabel = sp ? localPackageLabel(sp) : null;
+                    let agg = bySubKey.get(subKey);
+                    if (!agg) {
+                        agg = {
+                            key: subKey,
+                            packageName: pkgName,
+                            packageVersion: sp ? sp.version : '',
+                            workspaceRoots: [],
+                            seenWorkspaceRoot: new Set(),
+                            specifierParts: new Set(),
+                            manifestConstraints: manifestConstraints || null,
+                            neededByParents: new Set(),
+                            osvEligible,
+                            osvPkgId,
+                            localSourceLabel,
+                        };
+                        bySubKey.set(subKey, agg);
+                    }
+                    const wrKey = `${workspace}\0${rootTitle}`;
+                    if (!agg.seenWorkspaceRoot.has(wrKey)) {
+                        agg.seenWorkspaceRoot.add(wrKey);
+                        agg.workspaceRoots.push({ workspace, rootTitle });
+                    }
+                    for (const s of specParts) agg.specifierParts.add(s);
+                    for (const p of parentLabels) agg.neededByParents.add(p);
+                }
+            }
+            const rows = [];
+            for (const agg of bySubKey.values()) {
+                agg.workspaceRoots.sort((a, b) => {
+                    const w = a.workspace.localeCompare(b.workspace);
+                    if (w !== 0) return w;
+                    return a.rootTitle.localeCompare(b.rootTitle);
+                });
+                const specifier =
+                    agg.specifierParts.size > 0
+                        ? [...agg.specifierParts].sort().join(', ')
+                        : null;
+                rows.push({
+                    key: agg.key,
+                    packageName: agg.packageName,
+                    packageVersion: agg.packageVersion,
+                    workspaceRoots: agg.workspaceRoots,
+                    specifier,
+                    manifestConstraints: agg.manifestConstraints,
+                    neededBy: agg.neededByParents.size
+                        ? [...agg.neededByParents].sort().join(', ')
+                        : '-',
+                    osvEligible: agg.osvEligible,
+                    osvPkgId: agg.osvPkgId,
+                    localSourceLabel: agg.localSourceLabel,
+                });
+            }
+            rows.sort((a, b) => {
+                const n = normName(a.packageName).localeCompare(normName(b.packageName));
+                if (n !== 0) return n;
+                return String(a.packageVersion).localeCompare(String(b.packageVersion));
+            });
+            return rows;
+        }
+
+        function normPypiName(n) {
+            return String(n ?? '')
+                .toLowerCase()
+                .replace(/[-_.]+/g, '-')
+                .replace(/^-+|-+$/g, '');
+        }
+
+        function osvPyPIListUrl(pkgName) {
+            const q = encodeURIComponent(normPypiName(pkgName));
+            return `https://osv.dev/list?ecosystem=PyPI&q=${q}`;
+        }
+
+        const OSV_UNKNOWN_SEVERITY_SCORE = 5;
+
+        function cvssV3BaseScoreFromVector(vector) {
+            if (!vector || typeof vector !== 'string' || !vector.startsWith('CVSS:3')) {
+                return null;
+            }
+            const m = {};
+            for (const part of vector.split('/')) {
+                const c = part.indexOf(':');
+                if (c <= 0) continue;
+                const k = part.slice(0, c);
+                const v = part.slice(c + 1);
+                if (k !== 'CVSS') m[k] = v;
+            }
+            if (!m.AV || !m.AC || !m.PR || !m.UI || !m.S || m.C == null || m.I == null || m.A == null) {
+                return null;
+            }
+            const av = { N: 0.85, A: 0.62, L: 0.55, P: 0.2 }[m.AV];
+            const ac = { L: 0.77, H: 0.44 }[m.AC];
+            const pr =
+                m.S === 'U'
+                    ? { N: 0.85, L: 0.62, H: 0.27 }[m.PR]
+                    : { N: 0.85, L: 0.68, H: 0.5 }[m.PR];
+            const ui = { N: 0.85, R: 0.56 }[m.UI];
+            const c = { N: 0, L: 0.22, H: 0.56 }[m.C];
+            const ii = { N: 0, L: 0.22, H: 0.56 }[m.I];
+            const a = { N: 0, L: 0.22, H: 0.56 }[m.A];
+            if ([av, ac, pr, ui, c, ii, a].some((x) => x == null)) return null;
+            const iss = 1 - (1 - c) * (1 - ii) * (1 - a);
+            let impact;
+            if (m.S === 'U') {
+                impact = 6.42 * iss;
+            } else {
+                impact = 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15;
+            }
+            if (impact <= 0) return 0;
+            const exploitability = 8.22 * av * ac * pr * ui;
+            const base =
+                m.S === 'U'
+                    ? Math.min(impact + exploitability, 10)
+                    : Math.min(1.08 * (impact + exploitability), 10);
+            return Math.round(base * 10) / 10;
+        }
+
+        function severityLabelToScore(label) {
+            if (!label || typeof label !== 'string') return null;
+            const u = label.trim().toUpperCase();
+            const map = {
+                CRITICAL: 9.5,
+                HIGH: 7.5,
+                MODERATE: 5.5,
+                MEDIUM: 5.5,
+                LOW: 2.5,
+            };
+            return map[u] ?? null;
+        }
+
+        function severityScoreFromOsvVulnRecord(v) {
+            if (!v || typeof v !== 'object') return null;
+            let best = null;
+            const bump = (x) => {
+                if (x != null && !Number.isNaN(x)) {
+                    best = best == null ? x : Math.max(best, x);
+                }
+            };
+            const ds = v.database_specific;
+            if (ds && typeof ds === 'object' && typeof ds.severity === 'string') {
+                bump(severityLabelToScore(ds.severity));
+            }
+            const sev = v.severity;
+            if (Array.isArray(sev)) {
+                for (const s of sev) {
+                    if (!s || typeof s !== 'object' || s.type !== 'CVSS_V3' || typeof s.score !== 'string') {
+                        continue;
+                    }
+                    bump(cvssV3BaseScoreFromVector(s.score));
+                }
+            }
+            const aff = v.affected;
+            if (Array.isArray(aff)) {
+                for (const a of aff) {
+                    if (!a || typeof a !== 'object') continue;
+                    const es = a.ecosystem_specific;
+                    if (es && typeof es === 'object' && typeof es.severity === 'string') {
+                        bump(severityLabelToScore(es.severity));
+                    }
+                }
+            }
+            return best;
+        }
+
+        function vulnSeverityClass(score) {
+            if (score == null) return 'text-red-200/95';
+            if (score >= 9) return 'text-red-300';
+            if (score >= 7) return 'text-orange-300';
+            if (score >= 4) return 'text-amber-300';
+            return 'text-yellow-200/85';
+        }
+
+        function isOsvPyPI(p) {
+            if (!p || isProjectRoot(p)) return false;
+            const s = p.source;
+            if (!s || typeof s !== 'object' || s.registry == null) return false;
+            return Boolean(p.name && p.version);
+        }
+
+        function hasCveId(ids) {
+            if (!ids || !ids.length) return false;
+            return ids.some((id) => typeof id === 'string' && /^CVE-/i.test(id.trim()));
+        }
+
+        function manifestSpecifiersFor(depName, manifestMap) {
+            if (!manifestMap || !depName) return null;
+            const arr = manifestMap.get(normName(depName));
+            if (!arr || !arr.length) return null;
+            return arr.join(', ');
+        }
+
+        function collectParentSpecifiersByPackage(packages) {
+            const byParent = new Map();
+            if (!Array.isArray(packages)) return byParent;
+            for (const pkg of packages) {
+                const md = pkg.metadata;
+                if (!md || typeof md !== 'object') continue;
+                const acc = new Map();
+                function addRow(row) {
+                    if (!row || typeof row !== 'object') return;
+                    const n = row.name;
+                    if (n == null) return;
+                    const spec = row.specifier != null ? String(row.specifier).trim() : '';
+                    if (!spec) return;
+                    const k = normName(n);
+                    if (!acc.has(k)) acc.set(k, []);
+                    acc.get(k).push(spec);
+                }
+                function addArray(arr) {
+                    if (!Array.isArray(arr)) return;
+                    for (const row of arr) addRow(row);
+                }
+                addArray(md['requires-dist']);
+                const reqDev = md['requires-dev'];
+                if (reqDev && typeof reqDev === 'object') {
+                    if (Array.isArray(reqDev.dev)) addArray(reqDev.dev);
+                }
+                if (!acc.size) continue;
+                const flat = new Map();
+                acc.forEach((specs, k) => {
+                    flat.set(k, [...new Set(specs)].join(', '));
+                });
+                byParent.set(pkgKey(pkg), flat);
+            }
+            return byParent;
+        }
+
+        function metadataSpecifierForDependency(depName, parentPkg, byParentSpecs) {
+            if (!parentPkg || !byParentSpecs) return null;
+            const inner = byParentSpecs.get(pkgKey(parentPkg));
+            if (!inner) return null;
+            const s = inner.get(normName(depName));
+            return s ? String(s) : null;
+        }
+
+        function collectManifestConstraints(data) {
+            const m = new Map();
+            const man = data.manifest;
+            if (!man || typeof man !== 'object') return m;
+            const constraints = man.constraints;
+            if (!Array.isArray(constraints)) return m;
+            for (const c of constraints) {
+                if (!c || typeof c !== 'object') continue;
+                const n = c.name;
+                if (n == null) continue;
+                const spec = c.specifier != null ? String(c.specifier).trim() : '';
+                const k = normName(n);
+                if (!m.has(k)) m.set(k, []);
+                if (spec) m.get(k).push(spec);
+            }
+            return m;
+        }
+
+        function cmpSemver(a, b) {
+            const pa = String(a).split('.').map((x) => parseInt(x, 10) || 0);
+            const pb = String(b).split('.').map((x) => parseInt(x, 10) || 0);
+            const n = Math.max(pa.length, pb.length);
+            for (let i = 0; i < n; i += 1) {
+                const x = pa[i] ?? 0;
+                const y = pb[i] ?? 0;
+                if (x < y) return -1;
+                if (x > y) return 1;
+            }
+            return 0;
+        }
+
+        function resolvePkg(all, dep) {
+            const n = normName(dep.name);
+            const candidates = all.filter((p) => normName(p.name) === n);
+            if (candidates.length === 0) return { pkg: null, ambiguous: false };
+            if (dep.version) {
+                const hit = candidates.find((p) => p.version === dep.version);
+                return { pkg: hit ?? null, ambiguous: false };
+            }
+            if (candidates.length === 1) return { pkg: candidates[0], ambiguous: false };
+            if (dep.source != null) {
+                const want = JSON.stringify(dep.source);
+                const hit = candidates.find((p) => JSON.stringify(p.source) === want);
+                if (hit) return { pkg: hit, ambiguous: false };
+            }
+            const sorted = [...candidates].sort((a, b) => cmpSemver(b.version, a.version));
+            return { pkg: sorted[0], ambiguous: true };
+        }
+
+        function normalizeDepExtras(ex) {
+            if (ex == null) return null;
+            if (Array.isArray(ex) && ex.length) return ex.map((e) => String(e));
+            return null;
+        }
+
+        function depRowsForList(deps, rootPkg, manifestMap, byParentSpecs, allPackages, kind) {
+            if (!Array.isArray(deps) || !deps.length) return [];
+            const workspace = workspaceLabelFromRoot(rootPkg);
+            const rootTitle = `${rootPkg.name}@${rootPkg.version}`;
+            const rows = [];
+            for (const dep of deps) {
+                if (!dep || dep.name == null) continue;
+                const name = String(dep.name);
+                const { pkg: child, ambiguous } = resolvePkg(allPackages, dep);
+                const metaSpec = metadataSpecifierForDependency(name, rootPkg, byParentSpecs);
+                const manSpec = manifestSpecifiersFor(name, manifestMap);
+                const extras = normalizeDepExtras(dep.extra);
+                const extrasLabel =
+                    extras && extras.length ? `[${extras.join(', ')}]` : '';
+                const marker = dep.marker != null ? String(dep.marker) : '';
+                const markerShort =
+                    marker.length > 64 ? `${marker.slice(0, 62)}...` : marker;
+                const mergeKey = `${kind}:${name}:${extrasLabel}:${marker}`;
+                const osvEligible = Boolean(child && isOsvPyPI(child));
+                const osvPkgId = osvEligible && child ? pkgKey(child) : null;
+                const localSourceLabel = child ? localPackageLabel(child) : null;
+                rows.push({
+                    mergeKey,
+                    key: mergeKey,
+                    name,
+                    extrasLabel,
+                    markerShort: markerShort || null,
+                    specifier: metaSpec || null,
+                    manifestConstraints: manSpec || null,
+                    resolved: child ? child.version : null,
+                    ambiguous,
+                    osvEligible,
+                    osvPkgId,
+                    localSourceLabel,
+                    workspaceRoot: { workspace, rootTitle },
+                });
+            }
+            rows.sort((a, b) => normName(a.name).localeCompare(normName(b.name)));
+            return rows;
+        }
+
+        function collapseDirectDepRows(rows) {
+            const map = new Map();
+            for (const row of rows) {
+                const k = row.mergeKey;
+                if (!map.has(k)) {
+                    const { workspaceRoot, mergeKey, ...base } = row;
+                    const agg = {
+                        ...base,
+                        key: mergeKey,
+                        workspaceRoots: [workspaceRoot],
+                        seenWr: new Set([`${workspaceRoot.workspace}\0${workspaceRoot.rootTitle}`]),
+                        specifierParts: new Set(),
+                    };
+                    if (row.specifier) agg.specifierParts.add(row.specifier);
+                    map.set(k, agg);
+                } else {
+                    const agg = map.get(k);
+                    const wrKey = `${row.workspaceRoot.workspace}\0${row.workspaceRoot.rootTitle}`;
+                    if (!agg.seenWr.has(wrKey)) {
+                        agg.seenWr.add(wrKey);
+                        agg.workspaceRoots.push(row.workspaceRoot);
+                    }
+                    if (row.specifier) agg.specifierParts.add(row.specifier);
+                    agg.ambiguous = agg.ambiguous || row.ambiguous;
+                }
+            }
+            const out = [];
+            for (const agg of map.values()) {
+                agg.workspaceRoots.sort((a, b) => {
+                    const w = a.workspace.localeCompare(b.workspace);
+                    if (w !== 0) return w;
+                    return a.rootTitle.localeCompare(b.rootTitle);
+                });
+                agg.specifier = agg.specifierParts.size ? [...agg.specifierParts].sort().join(', ') : null;
+                delete agg.specifierParts;
+                delete agg.seenWr;
+                delete agg.mergeKey;
+                out.push(agg);
+            }
+            out.sort((a, b) => normName(a.name).localeCompare(normName(b.name)));
+            return out;
+        }
+
+        function devDepsArray(rootPkg) {
+            const dd = rootPkg['dev-dependencies'];
+            if (!dd || typeof dd !== 'object') return [];
+            const dev = dd.dev;
+            return Array.isArray(dev) ? dev : [];
+        }
+
+        function buildCollapsedRootGroups(rootPkgs, manifestMap, byParentSpecs, allPackages) {
+            if (!Array.isArray(rootPkgs) || !rootPkgs.length) return [];
+            const prodFlat = [];
+            const devFlat = [];
+            for (const root of rootPkgs) {
+                prodFlat.push(
+                    ...depRowsForList(
+                        root.dependencies,
+                        root,
+                        manifestMap,
+                        byParentSpecs,
+                        allPackages,
+                        'prod',
+                    ),
+                );
+                devFlat.push(
+                    ...depRowsForList(
+                        devDepsArray(root),
+                        root,
+                        manifestMap,
+                        byParentSpecs,
+                        allPackages,
+                        'dev',
+                    ),
+                );
+            }
+            const groups = [];
+            const prodCollapsed = collapseDirectDepRows(prodFlat);
+            if (prodCollapsed.length) groups.push({ label: 'Dependencies', rows: prodCollapsed });
+            const devCollapsed = collapseDirectDepRows(devFlat);
+            if (devCollapsed.length) groups.push({ label: 'Dev dependencies', rows: devCollapsed });
+            return groups;
+        }
+
+        const UvLockRoots = {
+            template: '#uv-roots-tpl',
+            setup() {
+                const dragOver = Vue.ref(false);
+                const fileLabel = Vue.ref('');
+                const parseError = Vue.ref('');
+                const metaLines = Vue.ref([]);
+                const parsed = Vue.ref(false);
+                const rootGroups = Vue.ref([]);
+                const projectRootsCount = Vue.ref(0);
+                const workspaceAliases = Vue.ref([]);
+                const subdependencyRows = Vue.ref([]);
+                const vulnMaxScoreByPkgId = Vue.ref({});
+                const vulnIdsByPkgId = Vue.ref({});
+                const osvScanning = Vue.ref(false);
+                const osvScanError = Vue.ref('');
+                const metaLine = Vue.computed(() => metaLines.value.length > 0);
+
+                async function runOsvScan() {
+                    const groups = rootGroups.value;
+                    const sliceInputs = [];
+                    const seen = new Set();
+                    function pushOsvRow(row, name, version) {
+                        if (!row.osvEligible || !version || !row.osvPkgId) return;
+                        if (seen.has(row.osvPkgId)) return;
+                        seen.add(row.osvPkgId);
+                        sliceInputs.push({
+                            id: row.osvPkgId,
+                            query: {
+                                package: { name: normPypiName(name), ecosystem: 'PyPI' },
+                                version: String(version),
+                            },
+                        });
+                    }
+                    for (const g of groups) {
+                        for (const row of g.rows) {
+                            pushOsvRow(row, row.name, row.resolved);
+                        }
+                    }
+                    for (const row of subdependencyRows.value) {
+                        pushOsvRow(row, row.packageName, row.packageVersion);
+                    }
+                    if (!sliceInputs.length) {
+                        vulnMaxScoreByPkgId.value = {};
+                        vulnIdsByPkgId.value = {};
+                        osvScanError.value = '';
+                        osvScanning.value = false;
+                        return;
+                    }
+                    osvScanning.value = true;
+                    osvScanError.value = '';
+                    const nextIds = {};
+                    const chunk = 500;
+                    try {
+                        for (let i = 0; i < sliceInputs.length; i += chunk) {
+                            const slice = sliceInputs.slice(i, i + chunk);
+                            const res = await fetch('https://api.osv.dev/v1/querybatch', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    queries: slice.map((s) => s.query),
+                                }),
+                            });
+                            if (!res.ok) {
+                                throw new Error(`OSV HTTP ${res.status}`);
+                            }
+                            const data = await res.json();
+                            const results = Array.isArray(data.results) ? data.results : [];
+                            for (let j = 0; j < slice.length; j++) {
+                                const row = results[j];
+                                const ids =
+                                    row && row.vulns && Array.isArray(row.vulns)
+                                        ? row.vulns.map((v) => v.id).filter(Boolean)
+                                        : [];
+                                if (ids.length) {
+                                    nextIds[slice[j].id] = ids;
+                                }
+                            }
+                        }
+                        const uniqueVulnIds = [...new Set(Object.values(nextIds).flat())];
+                        const vulnScoreByVulnId = {};
+                        const detailChunk = 50;
+                        for (let i = 0; i < uniqueVulnIds.length; i += detailChunk) {
+                            const part = uniqueVulnIds.slice(i, i + detailChunk);
+                            await Promise.all(
+                                part.map(async (vid) => {
+                                    try {
+                                        const r = await fetch(
+                                            `https://api.osv.dev/v1/vulns/${encodeURIComponent(vid)}`,
+                                        );
+                                        if (!r.ok) {
+                                            vulnScoreByVulnId[vid] = OSV_UNKNOWN_SEVERITY_SCORE;
+                                            return;
+                                        }
+                                        const data = await r.json();
+                                        const sc = severityScoreFromOsvVulnRecord(data);
+                                        vulnScoreByVulnId[vid] =
+                                            sc != null ? sc : OSV_UNKNOWN_SEVERITY_SCORE;
+                                    } catch {
+                                        vulnScoreByVulnId[vid] = OSV_UNKNOWN_SEVERITY_SCORE;
+                                    }
+                                }),
+                            );
+                        }
+                        const nextMax = {};
+                        for (const [pkgId, ids] of Object.entries(nextIds)) {
+                            let m = 0;
+                            for (const vid of ids) {
+                                const s = vulnScoreByVulnId[vid];
+                                m = Math.max(m, s != null ? s : OSV_UNKNOWN_SEVERITY_SCORE);
+                            }
+                            nextMax[pkgId] = Math.min(10, m);
+                        }
+                        vulnMaxScoreByPkgId.value = nextMax;
+                        vulnIdsByPkgId.value = nextIds;
+                    } catch (err) {
+                        osvScanError.value = err.message || String(err);
+                        vulnMaxScoreByPkgId.value = {};
+                        vulnIdsByPkgId.value = {};
+                    } finally {
+                        osvScanning.value = false;
+                    }
+                }
+
+                function vulnIdsForRow(row) {
+                    const id = row.osvPkgId;
+                    if (!id) return null;
+                    return vulnIdsByPkgId.value[id] ?? null;
+                }
+
+                function vulnMaxForRow(row) {
+                    const id = row.osvPkgId;
+                    if (!id) return null;
+                    const m = vulnMaxScoreByPkgId.value[id];
+                    return m != null ? m : null;
+                }
+
+                function applyLockText(text, name) {
+                    parseError.value = '';
+                    rootGroups.value = [];
+                    projectRootsCount.value = 0;
+                    workspaceAliases.value = [];
+                    subdependencyRows.value = [];
+                    metaLines.value = [];
+                    parsed.value = false;
+                    vulnMaxScoreByPkgId.value = {};
+                    vulnIdsByPkgId.value = {};
+                    osvScanError.value = '';
+                    osvScanning.value = false;
+                    try {
+                        const data = parse(text);
+                        parsed.value = true;
+                        const packages = Array.isArray(data.package) ? data.package : [];
+                        const mc = collectManifestConstraints(data);
+                        const manifestMap = mc.size ? mc : null;
+                        const pb = collectParentSpecifiersByPackage(packages);
+                        const byParentSpecs = pb.size ? pb : null;
+                        const lines = [];
+                        if (data['requires-python'] != null) {
+                            lines.push(`requires-python: ${data['requires-python']}`);
+                        }
+                        if (data.version != null) lines.push(`lock version: ${data.version}`);
+                        if (data.revision != null) lines.push(`revision: ${data.revision}`);
+                        lines.push(`packages: ${packages.length}`);
+                        if (mc.size) {
+                            let n = 0;
+                            mc.forEach((specs) => {
+                                n += specs.length;
+                            });
+                            lines.push(`manifest constraints: ${n} (unique packages: ${mc.size})`);
+                        }
+                        const man = data.manifest;
+                        if (man && typeof man === 'object' && Array.isArray(man.members) && man.members.length) {
+                            lines.push(`workspace members: ${man.members.join(', ')}`);
+                        }
+                        metaLines.value = lines;
+                        const roots = packages.filter(isProjectRoot);
+                        projectRootsCount.value = roots.length;
+                        const rg = buildCollapsedRootGroups(
+                            roots,
+                            manifestMap,
+                            byParentSpecs,
+                            packages,
+                        );
+                        const sub = buildSubdependencyRows(
+                            packages,
+                            roots,
+                            manifestMap,
+                            byParentSpecs,
+                        );
+                        workspaceAliases.value = assignWorkspaceAliases(rg, sub);
+                        rootGroups.value = rg;
+                        subdependencyRows.value = sub;
+                        Vue.nextTick(() => {
+                            void runOsvScan();
+                        });
+                    } catch (err) {
+                        parseError.value = err.message || String(err);
+                        parsed.value = false;
+                        rootGroups.value = [];
+                        projectRootsCount.value = 0;
+                        workspaceAliases.value = [];
+                        subdependencyRows.value = [];
+                        vulnMaxScoreByPkgId.value = {};
+                        vulnIdsByPkgId.value = {};
+                    }
+                    if (name) fileLabel.value = name;
+                }
+
+                const onFile = (e) => {
+                    const f = e.target.files && e.target.files[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = () => applyLockText(String(reader.result || ''), f.name);
+                    reader.onerror = () => {
+                        parseError.value = 'Could not read file.';
+                        parsed.value = false;
+                    };
+                    reader.readAsText(f, 'utf-8');
+                };
+
+                const onDrop = (e) => {
+                    dragOver.value = false;
+                    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+                    if (!f) return;
+                    const reader = new FileReader();
+                    reader.onload = () => applyLockText(String(reader.result || ''), f.name);
+                    reader.onerror = () => {
+                        parseError.value = 'Could not read file.';
+                        parsed.value = false;
+                    };
+                    reader.readAsText(f, 'utf-8');
+                };
+
+                return {
+                    dragOver,
+                    fileLabel,
+                    parseError,
+                    metaLines,
+                    metaLine,
+                    parsed,
+                    rootGroups,
+                    projectRootsCount,
+                    workspaceAliases,
+                    subdependencyRows,
+                    onFile,
+                    onDrop,
+                    osvScanning,
+                    osvScanError,
+                    vulnIdsForRow,
+                    vulnMaxForRow,
+                    vulnSeverityClass,
+                    hasCveId,
+                    osvPyPIListUrl,
+                };
+            },
+        };
+
+        const app = Vue.createApp({});
+        app.component('uv-lock-roots', UvLockRoots);
+        app.mount('#app');
+    </script>
+</body>
+</html>
