@@ -31,9 +31,8 @@
             <p class="text-sm text-gray-500 max-w-2xl pb-6">
                 Load a <span class="font-mono text-indigo-300/90">uv.lock</span> file. The graph is the union of dependency trees from project roots
                 (<span class="font-mono">source</span> is <span class="font-mono">virtual</span> or <span class="font-mono">editable</span>), with shared packages merged into one node.
-                Layout is radial by tree depth (depth 1 on one ring, depth 2 at twice the radius, etc.). Use <span class="font-mono">Ring spacing</span> to scale how far rings sit from the center. Zoom and pan with the mouse. Same environment filters as
-                <a href="v3.html" class="text-indigo-400 hover:text-indigo-200 underline">v3</a>.
-                Version ranges come from each parent package's <span class="font-mono">[package.metadata] requires-dist</span> / <span class="font-mono">requires-dev</span> when uv wrote them (e.g. <span class="font-mono">html2text</span> <span class="font-mono">>=2024.2.26</span>), else from <span class="font-mono">[manifest].constraints</span>. Edges show that constraint; resolved versions appear on nodes.
+                Layout is radial by depth (depth 1 on one ring; deeper rings place each node in a small arc around its parent so edges stay local). Use <span class="font-mono">Ring spacing</span> to scale how far rings sit from the center. Zoom and pan with the mouse.
+                Edge labels use each parent&apos;s <span class="font-mono">requires-dist</span> / <span class="font-mono">requires-dev</span> specifier when uv wrote it; otherwise the resolved <span class="font-mono">==</span> pin. <span class="font-mono">[manifest].constraints</span> (uv) are shown under the node&apos;s resolved version, not on edges.
             </p>
 
             <div class="rounded-lg border border-indigo-800/80 bg-indigo-900/40 p-4 mb-6 max-w-3xl space-y-4">
@@ -58,50 +57,6 @@
                 <div v-if="metaLine" class="text-xs text-gray-500 font-mono space-y-1">
                     <p v-for="(line, i) in metaLines" :key="i">{{ line }}</p>
                 </div>
-            </div>
-
-            <div
-                v-if="parsed && packageList.length"
-                class="rounded-lg border border-indigo-800/80 bg-indigo-900/40 p-4 mb-6 max-w-3xl space-y-4"
-            >
-                <h2 class="text-lg font-semibold text-indigo-200">Environment</h2>
-                <p class="text-xs text-gray-500 pb-2">
-                    Optional filters for <span class="font-mono">python_version</span>,
-                    <span class="font-mono">sys_platform</span>, and
-                    <span class="font-mono">platform_machine</span> in dependency markers. Any = do not filter on that dimension.
-                </p>
-                <fieldset class="min-w-0 border-0 p-0 m-0 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
-                    <label class="flex min-w-0 flex-1 flex-col gap-1">
-                        <span class="text-xs text-gray-500">Platform (<span class="font-mono">sys_platform</span>)</span>
-                        <select
-                            v-model="globalPlatformSelected"
-                            class="w-full max-w-xs rounded-md border border-indigo-700/50 bg-indigo-900 p-2 text-sm font-mono text-indigo-100"
-                        >
-                            <option value="">Any</option>
-                            <option v-for="pl in platformChoices" :key="'env-pl-' + pl" :value="pl">{{ pl }}</option>
-                        </select>
-                    </label>
-                    <label class="flex min-w-0 flex-1 flex-col gap-1">
-                        <span class="text-xs text-gray-500">Python (<span class="font-mono">python_version</span>)</span>
-                        <select
-                            v-model="globalPythonSelected"
-                            class="w-full max-w-xs rounded-md border border-indigo-700/50 bg-indigo-900 p-2 text-sm font-mono text-indigo-100"
-                        >
-                            <option value="">Any</option>
-                            <option v-for="py in pythonVersionChoices" :key="'env-py-' + py" :value="py">{{ py }}</option>
-                        </select>
-                    </label>
-                    <label class="flex min-w-0 flex-1 flex-col gap-1">
-                        <span class="text-xs text-gray-500">Machine (<span class="font-mono">platform_machine</span>)</span>
-                        <select
-                            v-model="globalPlatformMachineSelected"
-                            class="w-full max-w-xs rounded-md border border-indigo-700/50 bg-indigo-900 p-2 text-sm font-mono text-indigo-100"
-                        >
-                            <option value="">Any</option>
-                            <option v-for="m in platformMachineChoices" :key="'env-pm-' + m" :value="m">{{ m }}</option>
-                        </select>
-                    </label>
-                </fieldset>
             </div>
 
             <div v-if="graphStats" class="text-xs font-mono text-gray-500 pb-3">
@@ -139,7 +94,7 @@
                         <input
                             v-model.number="baseRadiusScale"
                             type="range"
-                            min="2"
+                            min="5"
                             max="8"
                             step="0.1"
                             class="min-w-0 flex-1 accent-indigo-500"
@@ -151,10 +106,12 @@
                 </div>
                 <div class="flex flex-wrap gap-4 px-3 py-2 text-xs border-b border-indigo-800/40">
                     <span><span class="inline-block h-2 w-2 rounded-full bg-teal-400 align-middle mr-1"></span> project root</span>
-                    <span><span class="inline-block h-2 w-2 rounded-full bg-indigo-400 align-middle mr-1"></span> dependency (deeper = smaller, darker)</span>
+                    <span><span class="inline-block h-2 w-2 rounded-full bg-indigo-400 align-middle mr-1"></span> dependency (deeper = darker; disk radius grows linearly with direct deps, capped)</span>
                     <span class="text-amber-400/90">dashed edge = ambiguous resolution</span>
+                    <span class="text-amber-400/90">amber line under the resolved version = <span class="font-mono">[manifest].constraints</span> for that package (uv)</span>
                     <span class="text-gray-500"><span class="font-mono">*</span> after a constraint or <span class="font-mono">==</span> pin = highest semver when several versions exist in the lockfile.</span>
-                    <span class="text-gray-500">Nodes show <span class="font-mono">name</span>, optional <span class="font-mono">[extras]</span> from the incoming edge, and <span class="font-mono">==version</span>. Edges show the declared constraint (or a lock <span class="font-mono">==</span> pin when there is no specifier). Hover a line for full detail.</span>
+                    <span class="text-gray-500">Arrows point to the depended-on package (parent <span class="font-mono">→</span> dependency).</span>
+                    <span class="text-gray-500">Nodes show <span class="font-mono">name</span>, optional <span class="font-mono">[extras]</span>, resolved version, and manifest constraints when listed. Edges show the parent&apos;s specifier range or pin. Hover a line for full detail.</span>
                 </div>
                 <div ref="graphHost" class="relative w-full min-h-[min(70vh,720px)] h-[70vh]"></div>
             </div>
@@ -246,14 +203,17 @@
             return byParent;
         }
 
+        function metadataSpecifierForDependency(depName, parentPkg, byParentSpecs) {
+            if (!parentPkg || !byParentSpecs) return null;
+            const inner = byParentSpecs.get(pkgKey(parentPkg));
+            if (!inner) return null;
+            const s = inner.get(normName(depName));
+            return s ? String(s) : null;
+        }
+
         function specifiersForEdge(depName, parentPkg, manifestMap, byParentSpecs) {
-            if (parentPkg && byParentSpecs) {
-                const inner = byParentSpecs.get(pkgKey(parentPkg));
-                if (inner) {
-                    const s = inner.get(normName(depName));
-                    if (s) return { text: s, from: 'metadata' };
-                }
-            }
+            const meta = metadataSpecifierForDependency(depName, parentPkg, byParentSpecs);
+            if (meta) return { text: meta, from: 'metadata' };
             const m = manifestSpecifiersFor(depName, manifestMap);
             if (m) return { text: m, from: 'manifest' };
             return null;
@@ -341,14 +301,17 @@
             dep,
             ambiguous,
             childVersion,
-            manifestConstraints,
             parentPkg,
             metadataSpecByParent,
         ) {
-            const spec = specifiersForEdge(dep.name, parentPkg, manifestConstraints, metadataSpecByParent);
+            const meta = metadataSpecifierForDependency(
+                dep.name,
+                parentPkg,
+                metadataSpecByParent,
+            );
             let core;
-            if (spec) {
-                core = spec.text;
+            if (meta) {
+                core = meta;
                 if (ambiguous) core = `${core}*`;
             } else if (childVersion) {
                 core = `==${childVersion}`;
@@ -368,21 +331,6 @@
             if (s.length > 48) return `${s.slice(0, 46)}…`;
             return s;
         }
-
-        const PYTHON_VERSION_CHOICES = ['3.14', '3.13', '3.12', '3.11', '3.10', '3.9'];
-        const PLATFORM_CHOICES = ['linux', 'darwin', 'win32'];
-        const PLATFORM_MACHINE_CHOICES = [
-            'x86_64',
-            'AMD64',
-            'aarch64',
-            'arm64',
-            'armv7l',
-            'i686',
-            'ppc64le',
-            's390x',
-            'riscv64',
-            'wasm32',
-        ];
 
         function parsePyVerLabel(label) {
             const m = String(label).match(/^(\d+)\.(\d+)/);
@@ -597,56 +545,226 @@
             return name;
         }
 
+        const NODE_R_MIN = 5;
+        const NODE_R_PER_DIRECT_DEP = 3.2;
+        const NODE_R_MAX = 34;
+
         function dependencyNodeStyle(d) {
+            const sc = d.subDepCount != null ? d.subDepCount : 0;
+            const r = Math.min(
+                NODE_R_MAX,
+                NODE_R_MIN + sc * NODE_R_PER_DIRECT_DEP,
+            );
             if (d.isRoot) {
-                return { r: 11, fill: '#2dd4bf', stroke: '#134e4a' };
+                return { r, fill: '#2dd4bf', stroke: '#134e4a' };
             }
             const depth = d.depthMin != null ? d.depthMin : 1;
             const t = Math.min(Math.max(depth - 1, 0) / 12, 1);
-            const r = 11 - t * 4.5;
             const fill = d3.interpolateRgb('#c4b5fd', '#4338ca')(t);
             const stroke = d3.interpolateRgb('#818cf8', '#312e81')(t);
-            return { r: Math.max(5.5, r), fill, stroke };
+            return { r, fill, stroke };
         }
 
-        function layoutRadialConcentric(nodes, w, h, radiusScale = 1) {
+        const MIN_NODE_CENTER_SEP = 28;
+
+        function minCenterSepForRing(nodeList) {
+            let maxR = 11;
+            for (const n of nodeList) {
+                const r = n.nodeR != null ? n.nodeR : 11;
+                if (r > maxR) maxR = r;
+            }
+            return Math.max(MIN_NODE_CENTER_SEP, 2 * maxR + 4);
+        }
+
+        function ringRadiusFloor(baseRadial, count, minSep) {
+            if (count <= 0) return baseRadial;
+            return Math.max(baseRadial, (count * minSep) / (2 * Math.PI));
+        }
+
+        function separateOnRing(nodeList, cx, cy, ringR, minSep) {
+            if (nodeList.length < 2 || ringR <= 0) return;
+            const minAngle = minSep / ringR;
+            const items = nodeList.map((n) => {
+                let ang = Math.atan2(n.y - cy, n.x - cx);
+                if (ang < 0) ang += 2 * Math.PI;
+                return { n, ang };
+            });
+            items.sort((a, b) => a.ang - b.ang);
+            const m = items.length;
+            for (let iter = 0; iter < 80; iter += 1) {
+                let changed = false;
+                for (let i = 0; i < m; i += 1) {
+                    const j = (i + 1) % m;
+                    let gap;
+                    if (j === 0) {
+                        gap = items[0].ang + 2 * Math.PI - items[m - 1].ang;
+                    } else {
+                        gap = items[j].ang - items[i].ang;
+                    }
+                    if (gap < minAngle) {
+                        const need = (minAngle - gap) / 2 + 1e-4;
+                        if (j === 0) {
+                            items[m - 1].ang -= need;
+                            items[0].ang += need;
+                        } else {
+                            items[i].ang -= need;
+                            items[j].ang += need;
+                        }
+                        changed = true;
+                    }
+                }
+                if (!changed) break;
+                items.forEach((it) => {
+                    while (it.ang < 0) it.ang += 2 * Math.PI;
+                    while (it.ang >= 2 * Math.PI) it.ang -= 2 * Math.PI;
+                });
+                items.sort((a, b) => a.ang - b.ang);
+            }
+            items.forEach(({ n, ang }) => {
+                let a = ang;
+                while (a > Math.PI) a -= 2 * Math.PI;
+                while (a < -Math.PI) a += 2 * Math.PI;
+                n.x = cx + ringR * Math.cos(a);
+                n.y = cy + ringR * Math.sin(a);
+            });
+        }
+
+        function layoutRadialNearParents(nodes, rawLinks, w, h, radiusScale = 1) {
             const cx = w / 2;
             const cy = h / 2;
             const scale =
                 Number.isFinite(radiusScale) && radiusScale > 0 ? radiusScale : 1;
+            const nodeById = new Map(nodes.map((n) => [n.id, n]));
             const byDepth = new Map();
             for (const n of nodes) {
                 const depth = n.depthMin != null ? n.depthMin : 0;
                 if (!byDepth.has(depth)) byDepth.set(depth, []);
                 byDepth.get(depth).push(n);
             }
-            const depthsSorted = [...byDepth.keys()].sort((a, b) => a - b);
-            const maxDepth = depthsSorted.length ? Math.max(...depthsSorted) : 0;
+            const maxDepth = byDepth.size ? Math.max(...byDepth.keys()) : 0;
             const minDim = Math.min(w, h);
             const baseR =
                 (maxDepth > 0 ? (minDim * 0.38) / maxDepth : minDim * 0.35) * scale;
 
-            for (const depth of depthsSorted) {
-                const list = byDepth.get(depth);
-                list.sort((a, b) => a.id.localeCompare(b.id));
-                const n = list.length;
-                const ringR = depth * baseR;
-                const stagger = depth % 2 ? Math.PI / Math.max(n * 2, 1) : 0;
-                if (depth === 0) {
-                    const r0 = n > 1 ? Math.min(18, baseR * 0.22) : 0;
-                    list.forEach((d, i) => {
-                        const angle = (2 * Math.PI * i) / n - Math.PI / 2 + stagger;
-                        d.x = cx + r0 * Math.cos(angle);
-                        d.y = cy + r0 * Math.sin(angle);
-                    });
-                } else {
-                    list.forEach((d, i) => {
-                        const angle = (2 * Math.PI * i) / n - Math.PI / 2 + stagger;
-                        d.x = cx + ringR * Math.cos(angle);
-                        d.y = cy + ringR * Math.sin(angle);
-                    });
+            const parentsByTarget = new Map();
+            for (const l of rawLinks) {
+                const t = l.target;
+                const s = l.source;
+                if (!parentsByTarget.has(t)) parentsByTarget.set(t, []);
+                parentsByTarget.get(t).push(s);
+            }
+
+            const d0 = byDepth.get(0) || [];
+            d0.sort((a, b) => a.id.localeCompare(b.id));
+            if (d0.length) {
+                const n = d0.length;
+                const sep0 = minCenterSepForRing(d0);
+                let r0 =
+                    n > 1
+                        ? Math.max(
+                              Math.min(18, baseR * 0.22),
+                              ringRadiusFloor(0, n, sep0),
+                          )
+                        : 0;
+                d0.forEach((d, i) => {
+                    const angle = (2 * Math.PI * i) / n - Math.PI / 2;
+                    d.x = cx + r0 * Math.cos(angle);
+                    d.y = cy + r0 * Math.sin(angle);
+                });
+                if (n > 1 && r0 > 0) {
+                    separateOnRing(d0, cx, cy, r0, sep0);
                 }
             }
+
+            const d1 = byDepth.get(1) || [];
+            d1.sort((a, b) => a.id.localeCompare(b.id));
+            if (d1.length) {
+                const n = d1.length;
+                const sep1 = minCenterSepForRing(d1);
+                let ringR = ringRadiusFloor(baseR, n, sep1);
+                d1.forEach((d, i) => {
+                    const angle = (2 * Math.PI * i) / n - Math.PI / 2;
+                    d.x = cx + ringR * Math.cos(angle);
+                    d.y = cy + ringR * Math.sin(angle);
+                });
+                separateOnRing(d1, cx, cy, ringR, sep1);
+            }
+
+            for (let depth = 2; depth <= maxDepth; depth += 1) {
+                const list = byDepth.get(depth) || [];
+                list.sort((a, b) => a.id.localeCompare(b.id));
+                const sepRing = minCenterSepForRing(list);
+                let ringR = ringRadiusFloor(
+                    depth * baseR,
+                    list.length,
+                    sepRing,
+                );
+                const byParent = new Map();
+                const unassigned = [];
+
+                for (const node of list) {
+                    const pids = parentsByTarget.get(node.id) || [];
+                    const parents = pids
+                        .map((pid) => nodeById.get(pid))
+                        .filter((p) => p && p.depthMin === depth - 1);
+                    parents.sort((a, b) => a.id.localeCompare(b.id));
+                    if (!parents.length) {
+                        unassigned.push(node);
+                        continue;
+                    }
+                    const primary = parents[0];
+                    if (!byParent.has(primary.id)) byParent.set(primary.id, []);
+                    byParent.get(primary.id).push(node);
+                }
+
+                for (const [, children] of byParent) {
+                    children.sort((a, b) => a.id.localeCompare(b.id));
+                }
+
+                for (const [parentId, children] of byParent) {
+                    const P = nodeById.get(parentId);
+                    if (!P || P.x == null || P.y == null) continue;
+                    const thetaP = Math.atan2(P.y - cy, P.x - cx);
+                    const k = children.length;
+                    const minFan = (k * sepRing) / ringR;
+                    const fan = Math.min(
+                        Math.PI * 0.5,
+                        Math.max(
+                            Math.PI / 6 + Math.max(0, k - 1) * 0.2,
+                            minFan,
+                        ),
+                    );
+                    children.forEach((node, i) => {
+                        const theta =
+                            k === 1
+                                ? thetaP
+                                : thetaP - fan / 2 + (i + 0.5) * (fan / k);
+                        node.x = cx + ringR * Math.cos(theta);
+                        node.y = cy + ringR * Math.sin(theta);
+                    });
+                }
+
+                if (unassigned.length) {
+                    unassigned.sort((a, b) => a.id.localeCompare(b.id));
+                    const un = unassigned.length;
+                    unassigned.forEach((node, i) => {
+                        const angle = (2 * Math.PI * i) / un - Math.PI / 2;
+                        node.x = cx + ringR * Math.cos(angle);
+                        node.y = cy + ringR * Math.sin(angle);
+                    });
+                }
+
+                separateOnRing(list, cx, cy, ringR, sepRing);
+            }
+        }
+
+        function countOutEdgesBySource(links) {
+            const m = new Map();
+            for (const l of links) {
+                const s = l.source;
+                m.set(s, (m.get(s) || 0) + 1);
+            }
+            return m;
         }
 
         function flattenTreeToGraph(roots, allPackages, manifestConstraints, metadataSpecByParent) {
@@ -688,7 +806,6 @@
                         e.dep,
                         e.ambiguous,
                         e.child.pkg.version,
-                        manifestConstraints,
                         node.pkg,
                         metadataSpecByParent,
                     );
@@ -733,7 +850,7 @@
                 const globalPlatformMachineSelected = Vue.ref('');
                 const graphHost = Vue.ref(null);
                 const showLabels = Vue.ref(true);
-                const baseRadiusScale = Vue.ref(2);
+                const baseRadiusScale = Vue.ref(5);
                 const manifestConstraints = Vue.ref(null);
                 const metadataSpecByParent = Vue.ref(null);
 
@@ -826,11 +943,6 @@
                     if (name) fileLabel.value = name;
                 }
 
-                Vue.watch(
-                    [globalPythonSelected, globalPlatformSelected, globalPlatformMachineSelected],
-                    () => rebuildRoots(),
-                );
-
                 const onFile = (e) => {
                     const f = e.target.files && e.target.files[0];
                     if (!f) return;
@@ -888,11 +1000,24 @@
                     const w = el.clientWidth || 800;
                     const h = el.clientHeight || 480;
 
+                    const outBySource = countOutEdgesBySource(rawLinks);
+                    const mc = manifestConstraints.value;
                     const nodes = rawNodes.map((n) => {
-                        const vis = dependencyNodeStyle(n);
-                        return { ...n, nodeR: vis.r, nodeFill: vis.fill, nodeStroke: vis.stroke };
+                        const subDepCount = outBySource.get(n.id) ?? 0;
+                        const vis = dependencyNodeStyle({ ...n, subDepCount });
+                        const manifestConstraintText = mc
+                            ? manifestSpecifiersFor(n.name, mc)
+                            : null;
+                        return {
+                            ...n,
+                            subDepCount,
+                            manifestConstraintText,
+                            nodeR: vis.r,
+                            nodeFill: vis.fill,
+                            nodeStroke: vis.stroke,
+                        };
                     });
-                    layoutRadialConcentric(nodes, w, h, baseRadiusScale.value);
+                    layoutRadialNearParents(nodes, rawLinks, w, h, baseRadiusScale.value);
 
                     const nodeById = new Map(nodes.map((n) => [n.id, n]));
                     const links = rawLinks
@@ -926,6 +1051,20 @@
                     zoomBehavior = d3.zoom().scaleExtent([0.15, 8]).on('zoom', zoomed);
                     svg.call(zoomBehavior);
 
+                    svg.append('defs')
+                        .append('marker')
+                        .attr('id', 'uv-graph-arrow-dep')
+                        .attr('viewBox', '0 0 10 10')
+                        .attr('refX', 10)
+                        .attr('refY', 5)
+                        .attr('markerWidth', 7)
+                        .attr('markerHeight', 7)
+                        .attr('orient', 'auto')
+                        .append('path')
+                        .attr('d', 'M0,0 L10,5 L0,10 z')
+                        .attr('fill', '#818cf8')
+                        .attr('fill-opacity', 0.95);
+
                     const linkG = gRoot
                         .append('g')
                         .attr('class', 'graph-links')
@@ -938,7 +1077,8 @@
                         .attr('stroke', '#6366f1')
                         .attr('stroke-opacity', 0.55)
                         .attr('stroke-width', 1.4)
-                        .attr('stroke-dasharray', (d) => (d.ambiguous ? '6 4' : null));
+                        .attr('stroke-dasharray', (d) => (d.ambiguous ? '6 4' : null))
+                        .attr('marker-end', 'url(#uv-graph-arrow-dep)');
 
                     linkG.append('title').text((d) => d.detailFull);
 
@@ -965,6 +1105,27 @@
                         .attr('stroke', (d) => d.nodeStroke)
                         .attr('stroke-width', 1.5);
 
+                    node.append('text')
+                        .attr('class', 'graph-node-dep-count')
+                        .attr('text-anchor', 'middle')
+                        .attr('dominant-baseline', 'central')
+                        .attr('y', 0)
+                        .attr('fill', '#0f172a')
+                        .attr('font-weight', 600)
+                        .attr('font-family', 'ui-monospace, monospace')
+                        .attr('font-size', (d) => {
+                            const n = d.subDepCount != null ? d.subDepCount : 0;
+                            if (n <= 0) return 8;
+                            const digits = String(n).length;
+                            const scale = digits > 2 ? 0.38 : 0.52;
+                            return Math.max(7, Math.min(15, d.nodeR * scale));
+                        })
+                        .style('pointer-events', 'none')
+                        .text((d) => {
+                            const n = d.subDepCount != null ? d.subDepCount : 0;
+                            return n > 0 ? String(n) : '';
+                        });
+
                     const labels = node
                         .append('text')
                         .attr('text-anchor', 'middle')
@@ -979,6 +1140,10 @@
                             .attr('x', 0)
                             .attr('dy', 0)
                             .attr('font-size', 10)
+                            .style(
+                                'text-shadow',
+                                '0 0 2px #0f172a, 0 0 5px #0f172a, 0 1px 3px rgba(15,23,42,0.85)',
+                            )
                             .text(d.name);
                         if (d.extrasDisplay && d.extrasDisplay.length) {
                             t.append('tspan')
@@ -991,13 +1156,30 @@
                             .attr('dy', '1.05em')
                             .attr('font-size', 8)
                             .attr('fill', '#94a3b8')
-                            .text(`==${d.version}`);
+                            .text(String(d.version ?? ''));
+                        if (d.manifestConstraintText) {
+                            t.append('tspan')
+                                .attr('x', 0)
+                                .attr('dy', '1.05em')
+                                .attr('font-size', 7)
+                                .attr('fill', '#fbbf24')
+                                .style(
+                                    'text-shadow',
+                                    '0 0 2px #0f172a, 0 1px 2px rgba(15,23,42,0.85)',
+                                )
+                                .text(d.manifestConstraintText);
+                        }
                     });
 
                     node.append('title').text((d) => {
-                        const base = `${pkgLabelWithExtras(d.name, d.extrasDisplay)}==${d.version}`;
-                        if (d.isRoot) return base;
-                        return `${base} (depth ${d.depthMin})`;
+                        const base = `${pkgLabelWithExtras(d.name, d.extrasDisplay)} ${d.version}`;
+                        const sd = d.subDepCount != null ? d.subDepCount : 0;
+                        const deps = `direct deps in graph: ${sd}`;
+                        const man = d.manifestConstraintText
+                            ? ` ${d.manifestConstraintText}`
+                            : '';
+                        if (d.isRoot) return `${base} (${deps})${man}`;
+                        return `${base} (depth ${d.depthMin}, ${deps})${man}`;
                     });
 
                     function drawRadial() {
@@ -1007,18 +1189,33 @@
                             const sy = d.source.y;
                             const tx = d.target.x;
                             const ty = d.target.y;
-                            g.select('line')
-                                .attr('x1', sx)
-                                .attr('y1', sy)
-                                .attr('x2', tx)
-                                .attr('y2', ty);
-                            const mx = (sx + tx) / 2;
-                            const my = (sy + ty) / 2;
                             const dx = tx - sx;
                             const dy = ty - sy;
                             const len = Math.hypot(dx, dy) || 1;
-                            const ox = (-dy / len) * 12;
-                            const oy = (dx / len) * 12;
+                            const ux = dx / len;
+                            const uy = dy / len;
+                            const rs = d.source.nodeR ?? 12;
+                            const rt = d.target.nodeR ?? 12;
+                            let x1 = sx;
+                            let y1 = sy;
+                            let x2 = tx;
+                            let y2 = ty;
+                            if (len > rs + rt + 2) {
+                                x1 = sx + ux * rs;
+                                y1 = sy + uy * rs;
+                                x2 = tx - ux * rt;
+                                y2 = ty - uy * rt;
+                            }
+                            g.select('line')
+                                .attr('x1', x1)
+                                .attr('y1', y1)
+                                .attr('x2', x2)
+                                .attr('y2', y2);
+                            const mx = (x1 + x2) / 2;
+                            const my = (y1 + y2) / 2;
+                            const segLen = Math.hypot(x2 - x1, y2 - y1) || 1;
+                            const ox = (-(y2 - y1) / segLen) * 12;
+                            const oy = ((x2 - x1) / segLen) * 12;
                             g.select('text').attr('x', mx + ox).attr('y', my + oy);
                         });
 
@@ -1111,12 +1308,6 @@
                     onFile,
                     onDrop,
                     dragOver,
-                    globalPythonSelected,
-                    globalPlatformSelected,
-                    globalPlatformMachineSelected,
-                    pythonVersionChoices: PYTHON_VERSION_CHOICES,
-                    platformChoices: PLATFORM_CHOICES,
-                    platformMachineChoices: PLATFORM_MACHINE_CHOICES,
                     graphHost,
                     graphNodeCount,
                     graphStats,
