@@ -29,7 +29,7 @@
         <div>
             <h1 class="text-3xl pb-4 font-black">uv.lock dependency graph</h1>
             <p class="text-sm text-gray-500 max-w-2xl pb-6">
-                Load a <span class="font-mono text-sky-300/90">uv.lock</span> file. Resolved <span class="font-mono">PyPI</span> versions are checked against <a class="text-sky-400 underline decoration-sky-500/50 hover:text-sky-300" href="https://osv.dev/" target="_blank" rel="noopener">OSV</a>; known vulnerabilities turn the node disk and version line red. The graph is the union of dependency trees from project roots
+                Load a <span class="font-mono text-sky-300/90">uv.lock</span> file. Resolved <span class="font-mono">PyPI</span> versions are checked against <a class="text-sky-400 underline decoration-sky-500/50 hover:text-sky-300" href="https://osv.dev/" target="_blank" rel="noopener">OSV</a>; known vulnerabilities tint the node disk and version line redder when severity is higher (CVSS v3 or advisory labels). The graph is the union of dependency trees from project roots
                 (<span class="font-mono">source</span> is <span class="font-mono">virtual</span> or <span class="font-mono">editable</span>), with shared packages merged into one node.
                 Layout is radial by depth (depth 1 on one ring; deeper rings place each node in a small arc around its parent so edges stay local). Use <span class="font-mono">Ring spacing</span> to scale how far rings sit from the center. Zoom and pan with the mouse.
                 Edge labels use each parent&apos;s <span class="font-mono">requires-dist</span> / <span class="font-mono">requires-dev</span> specifier when uv wrote it; otherwise the resolved <span class="font-mono">==</span> pin. <span class="font-mono">[manifest].constraints</span> (uv) are shown under the node&apos;s resolved version, not on edges. Click a node to open <span class="font-mono">osv.dev</span> with <span class="font-mono">PyPI</span> search for that package name.
@@ -96,7 +96,7 @@
                         <input
                             v-model.number="baseRadiusScale"
                             type="range"
-                            min="5"
+                            min="1"
                             max="8"
                             step="0.1"
                             class="min-w-0 flex-1 accent-cyan-500"
@@ -109,7 +109,7 @@
                 <div class="flex flex-wrap gap-4 px-3 py-2 text-xs border-b border-slate-700/40">
                     <span><span class="inline-block h-2 w-2 rounded-full bg-teal-400 align-middle mr-1"></span> project root</span>
                     <span><span class="inline-block h-2 w-2 rounded-full bg-cyan-400 align-middle mr-1"></span> dependency (deeper = darker; disk radius grows linearly with direct deps, capped)</span>
-                    <span class="text-red-400/90"><span class="inline-block h-2 w-2 rounded-full bg-red-400 align-middle mr-1"></span> node disk and version are red when OSV lists advisories (hover for ids)</span>
+                    <span class="text-red-400/90"><span class="inline-block h-2 w-2 rounded-full bg-red-400 align-middle mr-1"></span> node disk and version redden with severity (hover for ids)</span>
                     <span class="text-amber-400/90">dashed edge = ambiguous resolution</span>
                     <span class="text-amber-400/90">amber line under the resolved version = <span class="font-mono">[manifest].constraints</span> for that package (uv)</span>
                     <span class="text-gray-500"><span class="font-mono">*</span> after a constraint or <span class="font-mono">==</span> pin = highest semver when several versions exist in the lockfile.</span>
@@ -148,6 +148,108 @@
         function osvPyPIListUrl(pkgName) {
             const q = encodeURIComponent(normPypiName(pkgName));
             return `https://osv.dev/list?ecosystem=PyPI&q=${q}`;
+        }
+
+        const OSV_UNKNOWN_SEVERITY_SCORE = 5;
+        const VULN_GRAPH_LABEL_NAME_FILL = '#fecaca';
+        const VULN_GRAPH_LABEL_VERSION_FILL = '#fca5a5';
+
+        function cvssV3BaseScoreFromVector(vector) {
+            if (!vector || typeof vector !== 'string' || !vector.startsWith('CVSS:3')) {
+                return null;
+            }
+            const m = {};
+            for (const part of vector.split('/')) {
+                const c = part.indexOf(':');
+                if (c <= 0) continue;
+                const k = part.slice(0, c);
+                const v = part.slice(c + 1);
+                if (k !== 'CVSS') m[k] = v;
+            }
+            if (!m.AV || !m.AC || !m.PR || !m.UI || !m.S || m.C == null || m.I == null || m.A == null) {
+                return null;
+            }
+            const av = { N: 0.85, A: 0.62, L: 0.55, P: 0.2 }[m.AV];
+            const ac = { L: 0.77, H: 0.44 }[m.AC];
+            const pr =
+                m.S === 'U'
+                    ? { N: 0.85, L: 0.62, H: 0.27 }[m.PR]
+                    : { N: 0.85, L: 0.68, H: 0.50 }[m.PR];
+            const ui = { N: 0.85, R: 0.56 }[m.UI];
+            const c = { N: 0, L: 0.22, H: 0.56 }[m.C];
+            const ii = { N: 0, L: 0.22, H: 0.56 }[m.I];
+            const a = { N: 0, L: 0.22, H: 0.56 }[m.A];
+            if ([av, ac, pr, ui, c, ii, a].some((x) => x == null)) return null;
+            const iss = 1 - (1 - c) * (1 - ii) * (1 - a);
+            let impact;
+            if (m.S === 'U') {
+                impact = 6.42 * iss;
+            } else {
+                impact = 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15;
+            }
+            if (impact <= 0) return 0;
+            const exploitability = 8.22 * av * ac * pr * ui;
+            const base =
+                m.S === 'U'
+                    ? Math.min(impact + exploitability, 10)
+                    : Math.min(1.08 * (impact + exploitability), 10);
+            return Math.round(base * 10) / 10;
+        }
+
+        function severityLabelToScore(label) {
+            if (!label || typeof label !== 'string') return null;
+            const u = label.trim().toUpperCase();
+            const map = {
+                CRITICAL: 9.5,
+                HIGH: 7.5,
+                MODERATE: 5.5,
+                MEDIUM: 5.5,
+                LOW: 2.5,
+            };
+            return map[u] ?? null;
+        }
+
+        function severityScoreFromOsvVulnRecord(v) {
+            if (!v || typeof v !== 'object') return null;
+            let best = null;
+            const bump = (x) => {
+                if (x != null && !Number.isNaN(x)) {
+                    best = best == null ? x : Math.max(best, x);
+                }
+            };
+            const ds = v.database_specific;
+            if (ds && typeof ds === 'object' && typeof ds.severity === 'string') {
+                bump(severityLabelToScore(ds.severity));
+            }
+            const sev = v.severity;
+            if (Array.isArray(sev)) {
+                for (const s of sev) {
+                    if (!s || typeof s !== 'object' || s.type !== 'CVSS_V3' || typeof s.score !== 'string') {
+                        continue;
+                    }
+                    bump(cvssV3BaseScoreFromVector(s.score));
+                }
+            }
+            const aff = v.affected;
+            if (Array.isArray(aff)) {
+                for (const a of aff) {
+                    if (!a || typeof a !== 'object') continue;
+                    const es = a.ecosystem_specific;
+                    if (es && typeof es === 'object' && typeof es.severity === 'string') {
+                        bump(severityLabelToScore(es.severity));
+                    }
+                }
+            }
+            return best;
+        }
+
+        function vulnSeverityNodeColors(score) {
+            const t = Math.min(Math.max(score / 10, 0), 1);
+            return {
+                fill: d3.interpolateRgb('#fecaca', '#991b1b')(t),
+                stroke: d3.interpolateRgb('#fca5a5', '#450a0a')(t),
+                depCountFill: t > 0.55 ? '#fff1f2' : '#881337',
+            };
         }
 
         function pkgKey(p) {
@@ -877,7 +979,7 @@
                 const baseRadiusScale = Vue.ref(5);
                 const manifestConstraints = Vue.ref(null);
                 const metadataSpecByParent = Vue.ref(null);
-                const vulnByPkgId = Vue.ref({});
+                const vulnMaxScoreByPkgId = Vue.ref({});
                 const vulnIdsByPkgId = Vue.ref({});
                 const osvScanning = Vue.ref(false);
                 const osvScanError = Vue.ref('');
@@ -927,7 +1029,7 @@
                     parsed.value = false;
                     manifestConstraints.value = null;
                     metadataSpecByParent.value = null;
-                    vulnByPkgId.value = {};
+                    vulnMaxScoreByPkgId.value = {};
                     vulnIdsByPkgId.value = {};
                     osvScanError.value = '';
                     osvScanning.value = false;
@@ -1028,7 +1130,7 @@
                         });
                     }
                     if (!sliceInputs.length) {
-                        vulnByPkgId.value = {};
+                        vulnMaxScoreByPkgId.value = {};
                         vulnIdsByPkgId.value = {};
                         osvScanError.value = '';
                         osvScanning.value = false;
@@ -1036,7 +1138,6 @@
                     }
                     osvScanning.value = true;
                     osvScanError.value = '';
-                    const nextVuln = {};
                     const nextIds = {};
                     const chunk = 500;
                     try {
@@ -1061,16 +1162,49 @@
                                         ? row.vulns.map((v) => v.id).filter(Boolean)
                                         : [];
                                 if (ids.length) {
-                                    nextVuln[slice[j].id] = true;
                                     nextIds[slice[j].id] = ids;
                                 }
                             }
                         }
-                        vulnByPkgId.value = nextVuln;
+                        const uniqueVulnIds = [...new Set(Object.values(nextIds).flat())];
+                        const vulnScoreByVulnId = {};
+                        const detailChunk = 50;
+                        for (let i = 0; i < uniqueVulnIds.length; i += detailChunk) {
+                            const part = uniqueVulnIds.slice(i, i + detailChunk);
+                            await Promise.all(
+                                part.map(async (vid) => {
+                                    try {
+                                        const r = await fetch(
+                                            `https://api.osv.dev/v1/vulns/${encodeURIComponent(vid)}`,
+                                        );
+                                        if (!r.ok) {
+                                            vulnScoreByVulnId[vid] = OSV_UNKNOWN_SEVERITY_SCORE;
+                                            return;
+                                        }
+                                        const data = await r.json();
+                                        const sc = severityScoreFromOsvVulnRecord(data);
+                                        vulnScoreByVulnId[vid] =
+                                            sc != null ? sc : OSV_UNKNOWN_SEVERITY_SCORE;
+                                    } catch {
+                                        vulnScoreByVulnId[vid] = OSV_UNKNOWN_SEVERITY_SCORE;
+                                    }
+                                }),
+                            );
+                        }
+                        const nextMax = {};
+                        for (const [pkgId, ids] of Object.entries(nextIds)) {
+                            let m = 0;
+                            for (const vid of ids) {
+                                const s = vulnScoreByVulnId[vid];
+                                m = Math.max(m, s != null ? s : OSV_UNKNOWN_SEVERITY_SCORE);
+                            }
+                            nextMax[pkgId] = Math.min(10, m);
+                        }
+                        vulnMaxScoreByPkgId.value = nextMax;
                         vulnIdsByPkgId.value = nextIds;
                     } catch (err) {
                         osvScanError.value = err.message || String(err);
-                        vulnByPkgId.value = {};
+                        vulnMaxScoreByPkgId.value = {};
                         vulnIdsByPkgId.value = {};
                     } finally {
                         osvScanning.value = false;
@@ -1109,21 +1243,25 @@
 
                     const outBySource = countOutEdgesBySource(rawLinks);
                     const mc = manifestConstraints.value;
-                    const vb = vulnByPkgId.value;
+                    const vb = vulnMaxScoreByPkgId.value;
                     const nodes = rawNodes.map((n) => {
                         const subDepCount = outBySource.get(n.id) ?? 0;
                         const vis = dependencyNodeStyle({ ...n, subDepCount });
                         const manifestConstraintText = mc
                             ? manifestSpecifiersFor(n.name, mc)
                             : null;
-                        const vuln = Boolean(vb[n.id]);
+                        const sev = vb[n.id];
+                        const vuln = sev != null;
+                        const vc = vuln ? vulnSeverityNodeColors(sev) : null;
                         return {
                             ...n,
                             subDepCount,
                             manifestConstraintText,
                             nodeR: vis.r,
-                            nodeFill: vuln ? '#f87171' : vis.fill,
-                            nodeStroke: vuln ? '#991b1b' : vis.stroke,
+                            nodeFill: vuln ? vc.fill : vis.fill,
+                            nodeStroke: vuln ? vc.stroke : vis.stroke,
+                            vulnSeverity: vuln ? sev : null,
+                            vulnDepCountFill: vuln ? vc.depCountFill : null,
                         };
                     });
                     layoutRadialNearParents(nodes, rawLinks, w, h, baseRadiusScale.value);
@@ -1226,7 +1364,7 @@
                         .attr('text-anchor', 'middle')
                         .attr('dominant-baseline', 'central')
                         .attr('y', 0)
-                        .attr('fill', '#0c4a6e')
+                        .attr('fill', (d) => d.vulnDepCountFill ?? '#0c4a6e')
                         .attr('font-weight', 600)
                         .attr('font-family', 'ui-monospace, monospace')
                         .attr('font-size', (d) => {
@@ -1245,11 +1383,21 @@
                         .append('text')
                         .attr('text-anchor', 'middle')
                         .attr('y', (d) => d.nodeR + 4)
-                        .attr('fill', '#7dd3fc')
+                        .attr(
+                            'fill',
+                            (d) =>
+                                (d.vulnSeverity != null ? VULN_GRAPH_LABEL_NAME_FILL : '#7dd3fc'),
+                        )
                         .attr('font-family', 'ui-monospace, monospace');
 
                     labels.each(function appendNodeLabel(d) {
                         const t = d3.select(this);
+                        const nameFill =
+                            d.vulnSeverity != null ? VULN_GRAPH_LABEL_NAME_FILL : '#7dd3fc';
+                        const verFill =
+                            d.vulnSeverity != null
+                                ? VULN_GRAPH_LABEL_VERSION_FILL
+                                : '#94a3b8';
                         t.append('tspan')
                             .attr('x', 0)
                             .attr('dy', 0)
@@ -1262,16 +1410,15 @@
                         if (d.extrasDisplay && d.extrasDisplay.length) {
                             t.append('tspan')
                                 .attr('font-size', 9)
-                                .attr('fill', '#7dd3fc')
+                                .attr('fill', nameFill)
                                 .text(`[${d.extrasDisplay.join(', ')}]`);
                         }
-                        const vb = vulnByPkgId.value;
                         t.append('tspan')
                             .attr('class', 'graph-node-version')
                             .attr('x', 0)
                             .attr('dy', '1.05em')
                             .attr('font-size', 8)
-                            .attr('fill', vb[d.id] ? '#f87171' : '#94a3b8')
+                            .attr('fill', verFill)
                             .text(String(d.version ?? ''));
                         if (d.manifestConstraintText) {
                             t.append('tspan')
@@ -1295,13 +1442,17 @@
                             ? ` ${d.manifestConstraintText}`
                             : '';
                         const ids = vulnIdsByPkgId.value[d.id];
+                        const sevLine =
+                            d.vulnSeverity != null
+                                ? `\nMax severity (CVSS ~${d.vulnSeverity.toFixed(1)} / 10)`
+                                : '';
                         const osv =
                             ids && ids.length
                                 ? `\nOSV: ${ids.join(', ')}`
                                 : '';
                         const open = `\nOpen: ${osvPyPIListUrl(d.name)}`;
-                        if (d.isRoot) return `${base} (${deps})${man}${osv}${open}`;
-                        return `${base} (depth ${d.depthMin}, ${deps})${man}${osv}${open}`;
+                        if (d.isRoot) return `${base} (${deps})${man}${sevLine}${osv}${open}`;
+                        return `${base} (depth ${d.depthMin}, ${deps})${man}${sevLine}${osv}${open}`;
                     });
 
                     function drawRadial() {
@@ -1393,7 +1544,7 @@
                 Vue.watch(
                     roots,
                     () => {
-                        vulnByPkgId.value = {};
+                        vulnMaxScoreByPkgId.value = {};
                         vulnIdsByPkgId.value = {};
                         osvScanError.value = '';
                         Vue.nextTick(() => {
