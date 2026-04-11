@@ -74,6 +74,21 @@
                 <p v-if="osvScanError" class="text-sm text-amber-400/90">{{ osvScanError }}</p>
             </div>
 
+            <div
+                v-if="parsed && !parseError"
+                class="mb-4 flex max-w-3xl flex-wrap items-center gap-3 rounded-lg border border-slate-700/60 bg-slate-900/25 px-4 py-3"
+            >
+                <label class="flex cursor-pointer select-none items-center gap-2 text-sm text-gray-400">
+                    <input
+                        v-model="showOnlyCve"
+                        type="checkbox"
+                        class="h-4 w-4 rounded border-slate-600 bg-slate-950 text-sky-600 focus:ring-sky-500/40"
+                    />
+                    <span>Show only rows with a <span class="font-mono text-gray-300">CVE</span> ID (OSV)</span>
+                </label>
+                <span v-if="osvScanning && showOnlyCve" class="text-xs text-sky-400/90">Waiting for OSV…</span>
+            </div>
+
             <p v-if="parsed && !parseError && projectRootsCount === 0" class="text-sm text-amber-200/90 max-w-2xl">
                 No project roots found (no <span class="font-mono">source = { virtual = ... }</span> or
                 <span class="font-mono">editable = ...</span>).
@@ -101,7 +116,14 @@
             <div v-if="parsed && !parseError && projectRootsCount > 0" class="mb-10">
                 <h2 class="text-xl font-semibold text-teal-200/95 mb-1">Direct dependencies</h2>
                 <p v-if="!rootGroups.length" class="text-sm text-gray-500 mb-4">No direct dependencies on any root.</p>
-                <div v-for="g in rootGroups" :key="g.label" class="mb-6">
+                <p
+                    v-else-if="showOnlyCve && !rootGroupsFiltered.length"
+                    class="text-sm text-gray-500 mb-4"
+                >
+                    No direct dependencies with a CVE ID (OSV) match this filter.
+                </p>
+                <template v-else>
+                    <div v-for="g in rootGroupsFiltered" :key="g.label" class="mb-6">
                     <h3 class="text-sm font-medium text-sky-200/90 mb-2">{{ g.label }}</h3>
                     <div class="overflow-x-auto rounded-lg border border-slate-700/80">
                         <table class="w-full min-w-[72rem] text-sm border-collapse">
@@ -167,7 +189,7 @@
                                                 >
                                                     max severity ~{{ vulnMaxForRow(row).toFixed(1) }}/10
                                                 </span>
-                                                <span v-if="hasCveId(vulnIdsForRow(row))" class="text-gray-400 block mt-0.5">includes CVE</span>
+                                                <span v-if="rowMentionsCve(row)" class="text-gray-400 block mt-0.5">includes CVE</span>
                                                 <a
                                                     :href="osvPyPIListUrl(row.name)"
                                                     class="text-sky-400/90 underline decoration-sky-500/40 hover:text-sky-300 mt-0.5 inline-block"
@@ -183,7 +205,8 @@
                             </tbody>
                         </table>
                     </div>
-                </div>
+                    </div>
+                </template>
             </div>
 
             <div v-if="parsed && !parseError && subdependencyRows.length" class="mb-10">
@@ -194,7 +217,13 @@
                     dependencies of each root are excluded. <span class="font-mono">Needed by</span> unions parents from
                     every such tree.
                 </p>
-                <div class="overflow-x-auto rounded-lg border border-slate-700/80">
+                <p
+                    v-if="showOnlyCve && !subdependencyRowsFiltered.length"
+                    class="text-sm text-gray-500 mb-4"
+                >
+                    No transitive packages with a CVE ID (OSV) match this filter.
+                </p>
+                <div v-else class="overflow-x-auto rounded-lg border border-slate-700/80">
                     <table class="w-full min-w-[72rem] text-sm border-collapse">
                         <thead>
                             <tr class="border-b border-slate-700/80 bg-slate-900/60 text-left text-xs text-gray-500 uppercase tracking-wide">
@@ -209,7 +238,7 @@
                         </thead>
                         <tbody>
                             <tr
-                                v-for="row in subdependencyRows"
+                                v-for="row in subdependencyRowsFiltered"
                                 :key="row.key"
                                 class="border-b border-slate-800/80 hover:bg-slate-900/40"
                             >
@@ -256,7 +285,7 @@
                                             >
                                                 max severity ~{{ vulnMaxForRow(row).toFixed(1) }}/10
                                             </span>
-                                            <span v-if="hasCveId(vulnIdsForRow(row))" class="text-gray-400 block mt-0.5">includes CVE</span>
+                                            <span v-if="rowMentionsCve(row)" class="text-gray-400 block mt-0.5">includes CVE</span>
                                             <a
                                                 :href="osvPyPIListUrl(row.packageName)"
                                                 class="text-sky-400/90 underline decoration-sky-500/40 hover:text-sky-300 mt-0.5 inline-block"
@@ -645,9 +674,25 @@
             return Boolean(p.name && p.version);
         }
 
+        function stringMentionsCve(s) {
+            return typeof s === 'string' && /CVE-\d{4}-\d+/i.test(s);
+        }
+
         function hasCveId(ids) {
             if (!ids || !ids.length) return false;
-            return ids.some((id) => typeof id === 'string' && /^CVE-/i.test(id.trim()));
+            return ids.some((id) => typeof id === 'string' && stringMentionsCve(id.trim()));
+        }
+
+        function osvRecordMentionsCve(data) {
+            if (!data || typeof data !== 'object') return false;
+            const parts = [];
+            if (data.id != null) parts.push(String(data.id));
+            if (Array.isArray(data.aliases)) {
+                for (const a of data.aliases) {
+                    if (a != null) parts.push(String(a));
+                }
+            }
+            return parts.some((s) => stringMentionsCve(s));
         }
 
         function manifestSpecifiersFor(depName, manifestMap) {
@@ -895,6 +940,7 @@
                 const subdependencyRows = Vue.ref([]);
                 const vulnMaxScoreByPkgId = Vue.ref({});
                 const vulnIdsByPkgId = Vue.ref({});
+                const vulnIdHasCveFromDetails = Vue.ref({});
                 const osvScanning = Vue.ref(false);
                 const osvScanError = Vue.ref('');
                 const metaLine = Vue.computed(() => metaLines.value.length > 0);
@@ -926,6 +972,7 @@
                     if (!sliceInputs.length) {
                         vulnMaxScoreByPkgId.value = {};
                         vulnIdsByPkgId.value = {};
+                        vulnIdHasCveFromDetails.value = {};
                         osvScanError.value = '';
                         osvScanning.value = false;
                         return;
@@ -962,6 +1009,7 @@
                         }
                         const uniqueVulnIds = [...new Set(Object.values(nextIds).flat())];
                         const vulnScoreByVulnId = {};
+                        const detailCveByVulnId = {};
                         const detailChunk = 50;
                         for (let i = 0; i < uniqueVulnIds.length; i += detailChunk) {
                             const part = uniqueVulnIds.slice(i, i + detailChunk);
@@ -973,14 +1021,18 @@
                                         );
                                         if (!r.ok) {
                                             vulnScoreByVulnId[vid] = OSV_UNKNOWN_SEVERITY_SCORE;
+                                            detailCveByVulnId[vid] = stringMentionsCve(vid);
                                             return;
                                         }
                                         const data = await r.json();
                                         const sc = severityScoreFromOsvVulnRecord(data);
                                         vulnScoreByVulnId[vid] =
                                             sc != null ? sc : OSV_UNKNOWN_SEVERITY_SCORE;
+                                        detailCveByVulnId[vid] =
+                                            stringMentionsCve(vid) || osvRecordMentionsCve(data);
                                     } catch {
                                         vulnScoreByVulnId[vid] = OSV_UNKNOWN_SEVERITY_SCORE;
+                                        detailCveByVulnId[vid] = stringMentionsCve(vid);
                                     }
                                 }),
                             );
@@ -996,10 +1048,12 @@
                         }
                         vulnMaxScoreByPkgId.value = nextMax;
                         vulnIdsByPkgId.value = nextIds;
+                        vulnIdHasCveFromDetails.value = detailCveByVulnId;
                     } catch (err) {
                         osvScanError.value = err.message || String(err);
                         vulnMaxScoreByPkgId.value = {};
                         vulnIdsByPkgId.value = {};
+                        vulnIdHasCveFromDetails.value = {};
                     } finally {
                         osvScanning.value = false;
                     }
@@ -1018,6 +1072,35 @@
                     return m != null ? m : null;
                 }
 
+                function rowMentionsCve(row) {
+                    if (!row.osvEligible) return false;
+                    const ids = vulnIdsForRow(row);
+                    if (!ids || !ids.length) return false;
+                    if (hasCveId(ids)) return true;
+                    const map = vulnIdHasCveFromDetails.value;
+                    if (!map || typeof map !== 'object') return false;
+                    return ids.some((vid) => map[vid] === true);
+                }
+
+                const showOnlyCve = Vue.ref(false);
+
+                const rootGroupsFiltered = Vue.computed(() => {
+                    const src = rootGroups.value;
+                    if (!showOnlyCve.value) return src;
+                    return src
+                        .map((g) => ({
+                            label: g.label,
+                            rows: g.rows.filter((row) => rowMentionsCve(row)),
+                        }))
+                        .filter((g) => g.rows.length > 0);
+                });
+
+                const subdependencyRowsFiltered = Vue.computed(() => {
+                    const src = subdependencyRows.value;
+                    if (!showOnlyCve.value) return src;
+                    return src.filter((row) => rowMentionsCve(row));
+                });
+
                 function applyLockText(text, name) {
                     parseError.value = '';
                     rootGroups.value = [];
@@ -1028,8 +1111,10 @@
                     parsed.value = false;
                     vulnMaxScoreByPkgId.value = {};
                     vulnIdsByPkgId.value = {};
+                    vulnIdHasCveFromDetails.value = {};
                     osvScanError.value = '';
                     osvScanning.value = false;
+                    showOnlyCve.value = false;
                     try {
                         const data = parse(text);
                         parsed.value = true;
@@ -1086,6 +1171,7 @@
                         subdependencyRows.value = [];
                         vulnMaxScoreByPkgId.value = {};
                         vulnIdsByPkgId.value = {};
+                        vulnIdHasCveFromDetails.value = {};
                     }
                     if (name) fileLabel.value = name;
                 }
@@ -1123,9 +1209,12 @@
                     metaLine,
                     parsed,
                     rootGroups,
+                    rootGroupsFiltered,
                     projectRootsCount,
                     workspaceAliases,
                     subdependencyRows,
+                    subdependencyRowsFiltered,
+                    showOnlyCve,
                     onFile,
                     onDrop,
                     osvScanning,
@@ -1134,6 +1223,7 @@
                     vulnMaxForRow,
                     vulnSeverityClass,
                     hasCveId,
+                    rowMentionsCve,
                     osvPyPIListUrl,
                 };
             },
