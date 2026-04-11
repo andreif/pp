@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PyPI dependency tree (manual)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script>
+        if (location.protocol === 'https:') {
+            const t = parseInt(location.search.slice(1)) || 0;
+            const n = new Date().getTime();
+            if (n - t > 60 * 5 * 1000) {
+                location.href = location.pathname + '?' + n + location.hash;
+            }
+        }
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-indigo-950 p-2 lg:p-8 lg:px-24 text-gray-300 min-h-screen">
+    <div id="app">
+        <pypi-dep-tree></pypi-dep-tree>
+    </div>
+    <script type="importmap">{"imports": {
+      "vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.js"
+    }}</script>
+
+    <script type="text/x-template" id="filter-combobox-tpl">
+        <div class="relative" ref="rootEl">
+            <input
+                type="text"
+                :value="local"
+                :disabled="disabled || loading"
+                :placeholder="placeholder"
+                autocomplete="off"
+                spellcheck="false"
+                class="w-full placeholder-gray-500 bg-indigo-900 rounded-md p-2 border border-indigo-700/50 text-sm font-mono disabled:opacity-50"
+                @input="onInput"
+                @focus="onFocus"
+                @keydown="onInputKeydown"
+            />
+            <p v-if="loading" class="absolute right-2 top-2 text-xs text-gray-500 pointer-events-none">Loading...</p>
+            <ul
+                v-show="open && filtered.length"
+                ref="listEl"
+                role="listbox"
+                class="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-indigo-700/80 bg-indigo-950 py-1 shadow-lg"
+            >
+                <li
+                    v-for="(opt, index) in filtered"
+                    :key="opt"
+                    role="option"
+                    :aria-selected="highlightIndex === index"
+                    class="cursor-pointer px-3 py-1.5 text-sm font-mono hover:bg-indigo-800/80"
+                    :class="highlightIndex === index ? 'bg-indigo-800/90 text-indigo-100' : ''"
+                    @mousedown.prevent="pick(opt)"
+                >
+                    {{ opt }}
+                </li>
+            </ul>
+        </div>
+    </script>
+
+    <script type="text/x-template" id="dep-tree-root">
+        <div>
+            <h1 class="text-3xl pb-6 font-black">PyPI dependency tree</h1>
+            <p class="text-sm text-gray-500 max-w-2xl pb-6">
+                Type to filter choices in each field. Package names come from the PyPI simple index; versions and extras load from metadata when possible. Then load dependencies and repeat for subpackages.
+            </p>
+
+            <div class="rounded-lg border border-indigo-800/80 bg-indigo-900/40 p-4 mb-6 max-w-3xl space-y-4">
+                <h2 class="text-lg font-semibold text-indigo-200">Environment</h2>
+                <p class="text-xs text-gray-500 pb-2">Used for marker filtering when loading dependencies and when adding packages to the tree.</p>
+                <fieldset
+                    :disabled="!packagesReady"
+                    class="min-w-0 border-0 p-0 m-0 disabled:opacity-60"
+                >
+                <div class="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
+                    <label class="flex min-w-0 flex-1 flex-col gap-1">
+                        <span class="text-xs text-gray-500">Platform (sys_platform)</span>
+                        <select
+                            v-model="globalPlatformSelected"
+                            class="w-full max-w-xs rounded-md border border-indigo-700/50 bg-indigo-900 p-2 text-sm font-mono text-indigo-100 disabled:cursor-not-allowed"
+                        >
+                            <option value="">Any (no sys_platform filter)</option>
+                            <option v-for="pl in platformChoices" :key="'env-pl-' + pl" :value="pl">{{ pl }}</option>
+                        </select>
+                        <p class="text-xs text-gray-600">Any = do not filter on sys_platform markers.</p>
+                    </label>
+                    <label class="flex min-w-0 flex-1 flex-col gap-1">
+                        <span class="text-xs text-gray-500">Python version (python_version markers)</span>
+                        <select
+                            v-model="globalPythonSelected"
+                            class="w-full max-w-xs rounded-md border border-indigo-700/50 bg-indigo-900 p-2 text-sm font-mono text-indigo-100 disabled:cursor-not-allowed"
+                        >
+                            <option value="">Any (no python_version filter)</option>
+                            <option v-for="py in pythonVersionChoices" :key="'env-py-' + py" :value="py">{{ py }}</option>
+                        </select>
+                        <p class="text-xs text-gray-600">Any = do not filter on python_version markers.</p>
+                    </label>
+                </div>
+                </fieldset>
+            </div>
+
+            <div class="rounded-lg border border-indigo-800/80 bg-indigo-900/40 p-4 mb-6 max-w-3xl space-y-4">
+                <h2 class="text-lg font-semibold text-indigo-200">Root</h2>
+                <p v-if="!packagesReady" class="text-sm text-amber-200/90">Loading package index from PyPI...</p>
+                <fieldset
+                    :disabled="!packagesReady"
+                    class="min-w-0 border-0 p-0 m-0 flex flex-col gap-4 disabled:opacity-60"
+                >
+                    <div class="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 sm:items-end">
+                        <label class="flex min-w-0 flex-col gap-1">
+                            <span class="text-xs text-gray-500">Package name</span>
+                            <filter-combobox
+                                v-model="rootName"
+                                :options="allPackageNames"
+                                :loading="!packagesReady"
+                                :package-search="true"
+                                :min-query-chars="3"
+                                placeholder="Type at least 3 letters to see matches (fuzzy)"
+                            />
+                        </label>
+                        <label class="flex min-w-0 flex-col gap-1">
+                            <span class="text-xs text-gray-500">Version</span>
+                            <filter-combobox
+                                v-model="rootVersion"
+                                :options="rootVersionOptions"
+                                :loading="rootVersionsLoading"
+                                :disabled="!rootName.trim()"
+                                placeholder="Type to filter versions or enter any release"
+                            />
+                        </label>
+                    </div>
+                    <div class="flex flex-col gap-3">
+                        <div class="flex flex-col gap-2">
+                            <span class="text-xs text-gray-500">Extras</span>
+                            <p v-if="rootExtrasLoading" class="text-xs text-gray-500">Loading extras for this release...</p>
+                            <div
+                                v-else-if="rootExtrasList.length"
+                                class="flex max-h-36 flex-wrap gap-2 overflow-y-auto rounded-md border border-indigo-800/50 bg-indigo-950/50 p-2"
+                            >
+                                <label
+                                    v-for="ex in rootExtrasList"
+                                    :key="ex"
+                                    class="flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-sm hover:bg-indigo-800/40"
+                                >
+                                    <input v-model="rootExtrasSelected" type="checkbox" :value="ex" class="rounded border-indigo-600" />
+                                    <span class="font-mono text-indigo-200">{{ ex }}</span>
+                                </label>
+                            </div>
+                            <p v-else-if="rootName.trim() && rootVersion.trim() && !rootExtrasLoading" class="text-xs text-gray-500">
+                                No extras declared for this release.
+                            </p>
+                        </div>
+                    </div>
+                </fieldset>
+                <p v-if="rootError" class="text-amber-400 text-sm">{{ rootError }}</p>
+            </div>
+
+            <div v-if="rootNode" class="rounded-lg border border-indigo-800/80 bg-indigo-900/20 p-4">
+                <tree-node :node="rootNode" :depth="0" />
+            </div>
+        </div>
+    </script>
+
+    <script type="text/x-template" id="tree-node-tpl">
+        <div class="tree-node">
+            <div
+                class="flex flex-wrap items-baseline gap-2 py-2 border-l-2 border-indigo-600/50 pl-3 -ml-0"
+                :style="indentStyle">
+                <span class="font-mono text-indigo-200">{{ node.name }}</span>
+                <span class="text-gray-500 font-mono text-sm">=={{ node.version }}</span>
+                <span v-if="node.extras.length" class="text-xs text-indigo-400">[{{ node.extras.join(', ') }}]</span>
+                <span v-if="node.platforms?.length" class="text-xs text-gray-500">{{ node.platforms.join(', ') }}</span>
+                <span v-if="node.pythonVersions?.length" class="text-xs text-gray-500">py {{ node.pythonVersions.join(', ') }}</span>
+                <button v-if="!node.loaded" type="button" @click="loadSelf"
+                    class="text-xs rounded bg-indigo-700 hover:bg-indigo-600 px-2 py-0.5">Load deps</button>
+                <span v-if="node.loading" class="text-xs text-gray-500">Loading...</span>
+                <span v-if="node.fetchError" class="text-xs text-amber-400">{{ node.fetchError }}</span>
+            </div>
+
+            <div v-if="node.loaded && node.filteredRequires.length === 0" class="pl-6 text-sm text-gray-500 pb-2">
+                No requirements for this selection.
+            </div>
+
+            <div v-if="node.loaded && node.filteredRequires.length" class="pl-2 space-y-3 pb-4">
+                <div v-for="(req, idx) in node.filteredRequires" :key="idx"
+                    class="rounded-md bg-indigo-950/60 border border-indigo-800/40 p-3 text-sm">
+                    <div class="font-mono text-gray-400 break-all mb-2">{{ req.raw }}</div>
+                    <div class="flex flex-col gap-3">
+                        <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+                            <label class="flex min-w-[12rem] flex-1 flex-col gap-1">
+                                <span class="text-xs text-gray-500">Version</span>
+                                <filter-combobox
+                                    v-model="req.childVersion"
+                                    :options="req.versions"
+                                    :loading="req.versionsLoading"
+                                    placeholder="Filter versions or type a release"
+                                    @focus="ensureVersions(req)"
+                                    @update:model-value="onChildVersionInput(req)"
+                                />
+                            </label>
+                            <button type="button" :disabled="!resolvedChildVersion(req)"
+                                @click="addChild(req)"
+                                class="rounded-md px-3 py-2 text-sm font-medium shrink-0 disabled:opacity-40 disabled:cursor-not-allowed bg-teal-700 hover:bg-teal-600 text-white">
+                                Add to tree
+                            </button>
+                        </div>
+                        <div v-if="resolvedChildVersion(req)" class="flex flex-col gap-3 border-t border-indigo-800/30 pt-3">
+                            <div class="flex flex-col gap-2">
+                                <span class="text-xs text-gray-500">Extras</span>
+                                <p v-if="req.extrasLoading" class="text-xs text-gray-500">Loading extras...</p>
+                                <div
+                                    v-else-if="req.childExtrasList.length"
+                                    class="flex max-h-28 flex-wrap gap-2 overflow-y-auto rounded-md border border-indigo-800/50 bg-indigo-950/50 p-2"
+                                >
+                                    <label
+                                        v-for="ex in req.childExtrasList"
+                                        :key="ex"
+                                        class="flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-sm hover:bg-indigo-800/40"
+                                    >
+                                        <input v-model="req.childExtrasSelected" type="checkbox" :value="ex" class="rounded border-indigo-600" />
+                                        <span class="font-mono text-indigo-200">{{ ex }}</span>
+                                    </label>
+                                </div>
+                                <p v-else class="text-xs text-gray-500">No extras declared.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <p v-if="req.addError" class="mt-2 text-xs text-amber-400">{{ req.addError }}</p>
+                </div>
+            </div>
+
+            <div v-if="node.children.length" class="pl-4 border-l border-indigo-800/30 space-y-1">
+                <tree-node v-for="(ch, i) in node.children" :key="ch.id" :node="ch" :depth="depth + 1" />
+            </div>
+        </div>
+    </script>
+
+    <script type="module">
+        import * as Vue from 'vue';
+
+        /** Set window.__V2_DEBUG = false to silence these. */
+        function v2log(...args) {
+            if (typeof window !== 'undefined' && window.__V2_DEBUG === false) return;
+            console.log('[v2]', ...args);
+        }
+
+        function scheduleIdleTask(fn) {
+            if (typeof requestIdleCallback !== 'undefined') {
+                const id = requestIdleCallback(() => fn(), { timeout: 400 });
+                return () => {
+                    if (typeof cancelIdleCallback !== 'undefined') cancelIdleCallback(id);
+                };
+            }
+            const tid = setTimeout(fn, 48);
+            return () => clearTimeout(tid);
+        }
+
+        const EXTRA_RE = /extra\s*==\s*["']([^"']+)["']/i;
+
+        const PYTHON_VERSION_CHOICES = ['3.14', '3.13', '3.12', '3.11', '3.10', '3.9'];
+        const PLATFORM_CHOICES = ['linux', 'darwin', 'win32'];
+
+        function parsePyVerLabel(label) {
+            const m = String(label).match(/^(\d+)\.(\d+)/);
+            if (!m) return null;
+            return [parseInt(m[1], 10), parseInt(m[2], 10)];
+        }
+
+        function parsePyVerFromMarker(s) {
+            const m = String(s).match(/^(\d+)\.(\d+)(?:\.(\d+))?/);
+            if (!m) return null;
+            return [parseInt(m[1], 10), parseInt(m[2], 10), m[3] ? parseInt(m[3], 10) : 0];
+        }
+
+        function cmpVerTuple(a, b) {
+            for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+                const x = a[i] ?? 0;
+                const y = b[i] ?? 0;
+                if (x < y) return -1;
+                if (x > y) return 1;
+            }
+            return 0;
+        }
+
+        function cmpVerOp(lhs, op, rhs) {
+            const c = cmpVerTuple(lhs, rhs);
+            if (op === '==') return c === 0;
+            if (op === '!=') return c !== 0;
+            if (op === '>') return c > 0;
+            if (op === '<') return c < 0;
+            if (op === '>=') return c >= 0;
+            if (op === '<=') return c <= 0;
+            return true;
+        }
+
+        function flattenMarkerClauses(markers) {
+            const out = [];
+            for (const m of markers) {
+                const bits = m.split(/\s+and\s+/i).map((x) => x.trim()).filter(Boolean);
+                out.push(...bits);
+            }
+            return out;
+        }
+
+        function evalPythonClause(clause, pyLabel) {
+            if (!pyLabel) return true;
+            const m = clause.match(/python_version\s*(>=|<=|==|!=|>|<)\s*["']([^"']+)["']/i);
+            if (!m) return true;
+            const lhs = parsePyVerLabel(pyLabel);
+            const rhs = parsePyVerFromMarker(m[2]);
+            if (!lhs || !rhs) return true;
+            const lhs3 = [lhs[0], lhs[1], 0];
+            const rhs3 = [rhs[0], rhs[1], rhs[2] ?? 0];
+            return cmpVerOp(lhs3, m[1], rhs3);
+        }
+
+        function evalPlatformClause(clause, plat) {
+            if (!plat) return true;
+            const m = clause.match(/sys_platform\s*(==|!=)\s*["']([^"']+)["']/i);
+            if (!m) return true;
+            const want = m[2].toLowerCase();
+            const got = String(plat).toLowerCase();
+            if (m[1] === '==') return want === got;
+            return want !== got;
+        }
+
+        function requirementAppliesForEnv(markers, pythonVersions, platforms) {
+            const clauses = flattenMarkerClauses(markers);
+            const pyClauses = clauses.filter((c) => /python_version/i.test(c));
+            const plClauses = clauses.filter((c) => /sys_platform/i.test(c));
+            if (pyClauses.length === 0 && plClauses.length === 0) return true;
+            const pyList = pythonVersions.length ? pythonVersions : [null];
+            const platList = platforms.length ? platforms : [null];
+            for (const py of pyList) {
+                for (const plat of platList) {
+                    let ok = true;
+                    for (const cl of pyClauses) {
+                        if (!evalPythonClause(cl, py)) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if (!ok) continue;
+                    for (const cl of plClauses) {
+                        if (!evalPlatformClause(cl, plat)) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if (ok) return true;
+                }
+            }
+            return false;
+        }
+
+        function parseNameFromReqFirstPart(first) {
+            const m = first.match(/^([a-zA-Z0-9](?:[a-zA-Z0-9._-]*[a-zA-Z0-9])?)/);
+            return m ? m[1].toLowerCase() : '';
+        }
+
+        function splitRequirementLine(line) {
+            const parts = line.split(';').map((x) => x.trim());
+            const main = parts[0] || '';
+            const markers = parts.slice(1);
+            return { main, markers };
+        }
+
+        function requirementAppliesForExtras(markers, selectedExtras) {
+            const extraMarkers = [];
+            for (const m of markers) {
+                const x = m.match(EXTRA_RE);
+                if (x) extraMarkers.push(x[1]);
+            }
+            if (extraMarkers.length === 0) return true;
+            const set = new Set(selectedExtras.map((e) => e.toLowerCase()));
+            return extraMarkers.some((e) => set.has(e.toLowerCase()));
+        }
+
+        function filterRequiresDist(requiresDist, selectedExtras, pythonVersions, platforms) {
+            if (!requiresDist || !requiresDist.length) return [];
+            const out = [];
+            for (const line of requiresDist) {
+                const { main, markers } = splitRequirementLine(line);
+                if (!main) continue;
+                if (!requirementAppliesForExtras(markers, selectedExtras)) continue;
+                if (!requirementAppliesForEnv(markers, pythonVersions, platforms)) continue;
+                out.push(line);
+            }
+            return out;
+        }
+
+        function extraNamesReferencedInRequiresDist(requiresDist) {
+            const byLower = new Map();
+            const re = /extra\s*==\s*["']([^"']+)["']/gi;
+            for (const line of requiresDist || []) {
+                let m;
+                while ((m = re.exec(line)) !== null) {
+                    const raw = m[1];
+                    const k = raw.toLowerCase();
+                    if (!byLower.has(k)) byLower.set(k, raw);
+                }
+            }
+            return byLower;
+        }
+
+        async function fetchJson(url) {
+            const t0 = performance.now();
+            v2log('fetchJson start', url);
+            const r = await fetch(url);
+            v2log('fetchJson response', url, r.status, `${(performance.now() - t0).toFixed(1)}ms to headers`);
+            if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+            const data = await r.json();
+            v2log('fetchJson body parsed', url, `${(performance.now() - t0).toFixed(1)}ms total`);
+            return data;
+        }
+
+        async function listVersions(packageName) {
+            const data = await fetchJson(`https://pypi.org/pypi/${encodeURIComponent(packageName)}/json`);
+            const rel = data.releases || {};
+            return Object.keys(rel).sort((a, b) => {
+                const da = (rel[a] && rel[a][0] && rel[a][0].upload_time) || '';
+                const db = (rel[b] && rel[b][0] && rel[b][0].upload_time) || '';
+                return db.localeCompare(da);
+            });
+        }
+
+        async function fetchExtrasFor(name, version) {
+            const data = await fetchJson(
+                `https://pypi.org/pypi/${encodeURIComponent(name)}/${encodeURIComponent(version)}/json`,
+            );
+            const requires = data.info?.requires_dist || [];
+            const referenced = extraNamesReferencedInRequiresDist(requires);
+            const declared = Array.isArray(data.info?.provides_extra) ? data.info.provides_extra : [];
+            if (!declared.length) return [];
+            return declared
+                .filter((d) => referenced.has(String(d).toLowerCase()))
+                .sort((a, b) => a.localeCompare(b));
+        }
+
+        function uniqueStrings(arr) {
+            const seen = new Set();
+            const out = [];
+            for (const x of arr || []) {
+                const k = String(x).toLowerCase();
+                if (!seen.has(k)) {
+                    seen.add(k);
+                    out.push(x);
+                }
+            }
+            return out;
+        }
+
+        function envChoiceToList(s) {
+            const t = String(s ?? '').trim();
+            return t ? [t] : [];
+        }
+
+        function isLikelySanePackageName(name) {
+            if (!name || typeof name !== 'string') return false;
+            const s = name.trim();
+            if (s.length < 2 || s.length > 72) return false;
+            if (!/[a-zA-Z]/.test(s)) return false;
+            if (!/^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9._-]*[a-zA-Z0-9])$/i.test(s)) return false;
+            const sep = (s.match(/[._-]/g) || []).length;
+            if (s.length >= 12 && sep / s.length >= 0.42) return false;
+            if (/[._-]{5,}/.test(s)) return false;
+            if (s.split('-').length > 14) return false;
+            return true;
+        }
+
+        function levenshtein(a, b) {
+            const m = a.length;
+            const n = b.length;
+            if (m === 0) return n;
+            if (n === 0) return m;
+            if (m > n) return levenshtein(b, a);
+            const row = new Array(n + 1);
+            for (let j = 0; j <= n; j += 1) row[j] = j;
+            for (let i = 1; i <= m; i += 1) {
+                let prev = row[0];
+                row[0] = i;
+                for (let j = 1; j <= n; j += 1) {
+                    const cur = row[j];
+                    const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+                    row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + cost);
+                    prev = cur;
+                }
+            }
+            return row[n];
+        }
+
+        function fuzzyMaxDist(qlen) {
+            if (qlen <= 4) return 1;
+            if (qlen <= 8) return 2;
+            return 3;
+        }
+
+        const packageSearchCache = new WeakMap();
+
+        function searchPackageOptionsUncached(opts, ql, maxResults) {
+            const limit = maxResults ?? 150;
+            if (!ql) return [];
+            const seen = new Set();
+            const out = [];
+            const ranked = [];
+            for (let i = 0; i < opts.length; i += 1) {
+                const o = opts[i];
+                const ol = o.toLowerCase();
+                const idx = ol.indexOf(ql);
+                if (idx >= 0) ranked.push({ o, score: idx * 2000 + Math.min(ol.length, 200) });
+            }
+            ranked.sort((a, b) => a.score - b.score);
+            for (let i = 0; i < ranked.length && out.length < limit; i += 1) {
+                const { o } = ranked[i];
+                if (!seen.has(o)) {
+                    seen.add(o);
+                    out.push(o);
+                }
+            }
+            if (out.length >= 80) return out;
+
+            const maxDist = fuzzyMaxDist(ql.length);
+            const p3 = ql.slice(0, Math.min(3, ql.length));
+            const candidates = [];
+            for (let i = 0; i < opts.length; i += 1) {
+                const o = opts[i];
+                const ol = o.toLowerCase();
+                if (ol.startsWith(p3)) candidates.push(o);
+            }
+            const fuzzyHits = [];
+            for (let i = 0; i < candidates.length; i += 1) {
+                const o = candidates[i];
+                if (seen.has(o)) continue;
+                const ol = o.toLowerCase();
+                const cmp = ol.length <= ql.length + 10 ? ol : ol.slice(0, ql.length + 8);
+                const d = levenshtein(ql, cmp);
+                if (d <= maxDist) fuzzyHits.push({ o, d });
+            }
+            fuzzyHits.sort((a, b) => a.d - b.d || a.o.localeCompare(b.o));
+            for (let i = 0; i < fuzzyHits.length && out.length < limit; i += 1) {
+                const { o } = fuzzyHits[i];
+                if (!seen.has(o)) {
+                    seen.add(o);
+                    out.push(o);
+                }
+            }
+
+            if (out.length < 40 && ql.length >= 3) {
+                const p2 = ql.slice(0, 2);
+                const extra = [];
+                let scanned = 0;
+                const maxScan = 22000;
+                for (let i = 0; i < opts.length && scanned < maxScan; i += 1) {
+                    const o = opts[i];
+                    if (seen.has(o)) continue;
+                    const ol = o.toLowerCase();
+                    if (!ol.startsWith(p2)) continue;
+                    scanned += 1;
+                    const cmp = ol.length <= ql.length + 10 ? ol : ol.slice(0, ql.length + 8);
+                    const d = levenshtein(ql, cmp);
+                    if (d <= maxDist) extra.push({ o, d });
+                }
+                extra.sort((a, b) => a.d - b.d || a.o.localeCompare(b.o));
+                for (let i = 0; i < extra.length && out.length < limit; i += 1) {
+                    const { o } = extra[i];
+                    if (!seen.has(o)) {
+                        seen.add(o);
+                        out.push(o);
+                    }
+                }
+            }
+            return out;
+        }
+
+        function searchPackageOptions(opts, ql, maxResults) {
+            const limit = maxResults ?? 150;
+            if (!ql) return [];
+            let byQ = packageSearchCache.get(opts);
+            if (!byQ) {
+                byQ = new Map();
+                packageSearchCache.set(opts, byQ);
+            }
+            const key = `${limit}\0${ql}`;
+            const hit = byQ.get(key);
+            if (hit !== undefined) return hit;
+            const result = searchPackageOptionsUncached(opts, ql, maxResults);
+            if (byQ.size > 96) byQ.clear();
+            byQ.set(key, result);
+            return result;
+        }
+
+        const FilterCombobox = {
+            name: 'FilterCombobox',
+            template: '#filter-combobox-tpl',
+            props: {
+                modelValue: { type: String, default: '' },
+                options: { type: Array, default: () => [] },
+                placeholder: { type: String, default: '' },
+                loading: { type: Boolean, default: false },
+                disabled: { type: Boolean, default: false },
+                minQueryChars: { type: Number, default: 0 },
+                packageSearch: { type: Boolean, default: false },
+            },
+            emits: ['update:modelValue', 'focus'],
+            setup(props, { emit }) {
+                const rootEl = Vue.ref(null);
+                const open = Vue.ref(false);
+                const local = Vue.ref(props.modelValue ?? '');
+                Vue.watch(
+                    () => props.modelValue,
+                    (v) => {
+                        local.value = v ?? '';
+                    },
+                );
+                const filtered = Vue.ref([]);
+                let cancelPackageSearch = null;
+                Vue.watch(
+                    () => [local.value, props.options, props.packageSearch, props.minQueryChars],
+                    () => {
+                        if (cancelPackageSearch) {
+                            cancelPackageSearch();
+                            cancelPackageSearch = null;
+                        }
+                        const opts = props.options || [];
+                        const q = (local.value || '').trim().toLowerCase();
+                        const min = props.minQueryChars ?? 0;
+                        if (q.length < min) {
+                            filtered.value = [];
+                            return;
+                        }
+                        if (props.packageSearch) {
+                            filtered.value = [];
+                            cancelPackageSearch = scheduleIdleTask(() => {
+                                cancelPackageSearch = null;
+                                const t0 = performance.now();
+                                v2log(
+                                    'FilterCombobox packageSearch run (idle)',
+                                    'q=' + q,
+                                    'optsLen=' + opts.length,
+                                );
+                                filtered.value = searchPackageOptions(opts, q, 150);
+                                v2log(
+                                    'FilterCombobox packageSearch done',
+                                    `${(performance.now() - t0).toFixed(1)}ms`,
+                                    'results=' + filtered.value.length,
+                                );
+                            });
+                            return;
+                        }
+                        if (!q) {
+                            filtered.value = opts.slice(0, 150);
+                        } else {
+                            filtered.value = opts.filter((o) => o.toLowerCase().includes(q)).slice(0, 150);
+                        }
+                    },
+                    { immediate: true, flush: 'post' },
+                );
+                Vue.onUnmounted(() => {
+                    if (cancelPackageSearch) cancelPackageSearch();
+                });
+                const highlightIndex = Vue.ref(-1);
+                const listEl = Vue.ref(null);
+                Vue.watch(highlightIndex, async () => {
+                    await Vue.nextTick();
+                    const ul = listEl.value;
+                    const hi = highlightIndex.value;
+                    if (!ul || hi < 0) return;
+                    const li = ul.children[hi];
+                    if (li) li.scrollIntoView({ block: 'nearest' });
+                });
+                const onInput = (e) => {
+                    if (props.disabled || props.loading) return;
+                    highlightIndex.value = -1;
+                    local.value = e.target.value;
+                    emit('update:modelValue', e.target.value);
+                    open.value = true;
+                };
+                const pick = (opt) => {
+                    if (props.disabled || props.loading) return;
+                    local.value = opt;
+                    emit('update:modelValue', opt);
+                    open.value = false;
+                    highlightIndex.value = -1;
+                };
+                const onFocus = () => {
+                    if (props.disabled || props.loading) return;
+                    open.value = true;
+                    emit('focus');
+                };
+                const onInputKeydown = (e) => {
+                    if (props.disabled || props.loading) return;
+                    const list = Array.isArray(filtered.value) ? filtered.value : [];
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        open.value = false;
+                        highlightIndex.value = -1;
+                        return;
+                    }
+                    if (e.key === 'ArrowDown') {
+                        if (!list.length) return;
+                        e.preventDefault();
+                        open.value = true;
+                        if (highlightIndex.value < 0) highlightIndex.value = 0;
+                        else highlightIndex.value = Math.min(highlightIndex.value + 1, list.length - 1);
+                        return;
+                    }
+                    if (e.key === 'ArrowUp') {
+                        if (!list.length) return;
+                        e.preventDefault();
+                        open.value = true;
+                        if (highlightIndex.value <= 0) {
+                            highlightIndex.value = -1;
+                            return;
+                        }
+                        highlightIndex.value -= 1;
+                        return;
+                    }
+                    if (e.key === 'Enter') {
+                        if (highlightIndex.value >= 0 && highlightIndex.value < list.length) {
+                            e.preventDefault();
+                            pick(list[highlightIndex.value]);
+                        }
+                        return;
+                    }
+                    if (e.key === 'Tab') {
+                        open.value = false;
+                        highlightIndex.value = -1;
+                    }
+                };
+                const onDoc = (e) => {
+                    if (rootEl.value && !rootEl.value.contains(e.target)) {
+                        open.value = false;
+                        highlightIndex.value = -1;
+                    }
+                };
+                Vue.onMounted(() => document.addEventListener('mousedown', onDoc));
+                Vue.onUnmounted(() => document.removeEventListener('mousedown', onDoc));
+                return {
+                    rootEl,
+                    listEl,
+                    open,
+                    local,
+                    filtered,
+                    highlightIndex,
+                    onInput,
+                    pick,
+                    onFocus,
+                    onInputKeydown,
+                };
+            },
+        };
+
+        let idSeq = 0;
+        function nextId() {
+            idSeq += 1;
+            return `n-${idSeq}`;
+        }
+
+        function createEmptyNode(name, version, extras, pythonVersions, platforms) {
+            return {
+                id: nextId(),
+                name,
+                version,
+                extras,
+                pythonVersions: pythonVersions ?? [],
+                platforms: platforms ?? [],
+                loaded: false,
+                loading: false,
+                fetchError: null,
+                filteredRequires: [],
+                children: [],
+            };
+        }
+
+        async function loadDepsIntoNode(n) {
+            const rid = `${n.name}@${n.version}`;
+            const tAll = performance.now();
+            v2log('loadDepsIntoNode start', rid, 'node.id=' + n.id);
+            n.fetchError = null;
+            n.loading = true;
+            try {
+                const data = await fetchJson(
+                    `https://pypi.org/pypi/${encodeURIComponent(n.name)}/${encodeURIComponent(n.version)}/json`,
+                );
+                const requires = data.info?.requires_dist || [];
+                v2log('loadDepsIntoNode requires_dist count', rid, requires.length);
+                const tFilter = performance.now();
+                const filtered = filterRequiresDist(
+                    requires,
+                    n.extras,
+                    n.pythonVersions || [],
+                    n.platforms || [],
+                );
+                v2log(
+                    'loadDepsIntoNode filterRequiresDist',
+                    rid,
+                    `${(performance.now() - tFilter).toFixed(1)}ms`,
+                    'filteredLines=' + filtered.length,
+                );
+                const rows = [];
+                const tRows = performance.now();
+                for (const raw of filtered) {
+                    const { main } = splitRequirementLine(raw);
+                    const depName = parseNameFromReqFirstPart(main);
+                    if (!depName) continue;
+                    rows.push({
+                        raw,
+                        depName,
+                        versions: [],
+                        versionsLoading: false,
+                        versionsFetched: false,
+                        childVersion: '',
+                        childExtrasList: [],
+                        childExtrasSelected: [],
+                        extrasLoading: false,
+                        _extrasTimer: null,
+                        addError: '',
+                    });
+                }
+                v2log('loadDepsIntoNode build rows', rid, `${(performance.now() - tRows).toFixed(1)}ms`, 'rows=' + rows.length);
+                n.filteredRequires = rows;
+                n.loaded = true;
+                v2log('loadDepsIntoNode success', rid, `${(performance.now() - tAll).toFixed(1)}ms total before finally`);
+            } catch (e) {
+                v2log('loadDepsIntoNode catch', rid, e);
+                n.fetchError = e.message || String(e);
+            } finally {
+                n.loading = false;
+                v2log('loadDepsIntoNode finally', rid, 'loading=false', `${(performance.now() - tAll).toFixed(1)}ms since start`);
+            }
+        }
+
+        const TreeNode = {
+            name: 'TreeNode',
+            template: '#tree-node-tpl',
+            props: {
+                node: { type: Object, required: true },
+                depth: { type: Number, default: 0 },
+            },
+            setup(props) {
+                const globalPythonSelected = Vue.inject('globalPythonSelected');
+                const globalPlatformSelected = Vue.inject('globalPlatformSelected');
+
+                const indentStyle = Vue.computed(() => ({
+                    marginLeft: props.depth > 0 ? `${Math.min(props.depth * 12, 96)}px` : '0',
+                }));
+
+                const loadSelf = async () => {
+                    v2log('TreeNode Load deps click', props.node.name + '@' + props.node.version, 'id=' + props.node.id);
+                    await loadDepsIntoNode(props.node);
+                    v2log('TreeNode Load deps done', props.node.name, 'loaded=' + props.node.loaded);
+                };
+
+                const resolvedChildVersion = (req) => (req.childVersion || '').trim();
+
+                const addChild = async (req) => {
+                    req.addError = '';
+                    const ver = resolvedChildVersion(req);
+                    if (!ver) return;
+                    const extras = uniqueStrings(req.childExtrasSelected);
+                    const child = createEmptyNode(
+                        req.depName,
+                        ver,
+                        extras,
+                        envChoiceToList(globalPythonSelected.value),
+                        envChoiceToList(globalPlatformSelected.value),
+                    );
+                    props.node.children.push(child);
+                    await Vue.nextTick();
+                };
+
+                const ensureVersions = async (req) => {
+                    if (req.versionsFetched || req.versionsLoading) return;
+                    req.versionsLoading = true;
+                    try {
+                        req.versions = await listVersions(req.depName);
+                        req.versionsFetched = true;
+                    } catch {
+                        req.versions = [];
+                        req.versionsFetched = true;
+                    } finally {
+                        req.versionsLoading = false;
+                    }
+                };
+
+                const onChildVersionInput = (req) => {
+                    if (req._extrasTimer) clearTimeout(req._extrasTimer);
+                    req._extrasTimer = setTimeout(async () => {
+                        req._extrasTimer = null;
+                        const ver = resolvedChildVersion(req);
+                        if (!ver || !req.depName) {
+                            req.childExtrasList = [];
+                            req.childExtrasSelected = [];
+                            return;
+                        }
+                        req.extrasLoading = true;
+                        try {
+                            req.childExtrasList = await fetchExtrasFor(req.depName, ver);
+                            req.childExtrasSelected = [];
+                        } catch {
+                            req.childExtrasList = [];
+                        } finally {
+                            req.extrasLoading = false;
+                        }
+                    }, 400);
+                };
+
+                return {
+                    indentStyle,
+                    loadSelf,
+                    addChild,
+                    ensureVersions,
+                    resolvedChildVersion,
+                    onChildVersionInput,
+                };
+            },
+        };
+
+        TreeNode.components = { TreeNode, FilterCombobox };
+
+        const PypiDepTree = {
+            template: '#dep-tree-root',
+            components: { TreeNode, FilterCombobox },
+            setup() {
+                const rootName = Vue.ref('');
+                const rootVersion = Vue.ref('');
+                const rootError = Vue.ref('');
+                const rootNode = Vue.ref(null);
+
+                const packagesReady = Vue.ref(false);
+                const allPackages = Vue.ref([]);
+                const allPackageNames = Vue.computed(() => {
+                    const seen = new Set();
+                    const out = [];
+                    for (const [, display] of allPackages.value) {
+                        if (!isLikelySanePackageName(display)) continue;
+                        if (!seen.has(display)) {
+                            seen.add(display);
+                            out.push(display);
+                        }
+                    }
+                    return out.sort((a, b) => a.localeCompare(b));
+                });
+
+                const rootVersionOptions = Vue.ref([]);
+                const rootVersionsLoading = Vue.ref(false);
+                const rootExtrasList = Vue.ref([]);
+                const rootExtrasLoading = Vue.ref(false);
+                const rootExtrasSelected = Vue.ref([]);
+                const globalPythonSelected = Vue.ref('');
+                const globalPlatformSelected = Vue.ref('');
+
+                Vue.provide('globalPythonSelected', globalPythonSelected);
+                Vue.provide('globalPlatformSelected', globalPlatformSelected);
+
+                Vue.onMounted(async () => {
+                    try {
+                        const response = await fetch('https://pypi.org/simple/');
+                        if (response.ok) {
+                            const text = await response.text();
+                            const parser = new DOMParser();
+                            const doc = parser.parseFromString(text, 'text/html');
+                            allPackages.value = Array.from(doc.querySelectorAll('a')).map((link) => [
+                                link.textContent.toLowerCase(),
+                                link.textContent,
+                            ]);
+                        }
+                    } catch (err) {
+                        console.error(err);
+                    } finally {
+                        packagesReady.value = true;
+                    }
+                });
+
+                let versionTimer = null;
+                Vue.watch(rootName, (n) => {
+                    clearTimeout(versionTimer);
+                    const name = n.trim().toLowerCase();
+                    if (!name) {
+                        rootVersionOptions.value = [];
+                        rootVersion.value = '';
+                        return;
+                    }
+                    rootVersion.value = '';
+                    versionTimer = setTimeout(async () => {
+                        const requested = name;
+                        rootVersionsLoading.value = true;
+                        try {
+                            const list = await listVersions(requested);
+                            if (rootName.value.trim().toLowerCase() !== requested) return;
+                            rootVersionOptions.value = list;
+                            rootVersion.value = list[0] ?? '';
+                        } catch {
+                            if (rootName.value.trim().toLowerCase() !== requested) return;
+                            rootVersionOptions.value = [];
+                            rootVersion.value = '';
+                        } finally {
+                            rootVersionsLoading.value = false;
+                        }
+                    }, 400);
+                });
+
+                let extrasTimer = null;
+                Vue.watch([rootName, rootVersion], () => {
+                    clearTimeout(extrasTimer);
+                    const n = rootName.value.trim().toLowerCase();
+                    const v = rootVersion.value.trim();
+                    if (!n || !v) {
+                        rootExtrasList.value = [];
+                        return;
+                    }
+                    extrasTimer = setTimeout(async () => {
+                        rootExtrasLoading.value = true;
+                        try {
+                            rootExtrasList.value = await fetchExtrasFor(n, v);
+                        } catch {
+                            rootExtrasList.value = [];
+                        } finally {
+                            rootExtrasLoading.value = false;
+                        }
+                    }, 300);
+                });
+
+                const loadRoot = async () => {
+                    const t0 = performance.now();
+                    v2log('loadRoot');
+                    rootError.value = '';
+                    const name = rootName.value.trim().toLowerCase();
+                    const version = rootVersion.value.trim();
+                    if (!name || !version) {
+                        rootError.value = 'Package name and version are required.';
+                        return;
+                    }
+                    try {
+                        v2log('loadRoot prefetch', name, version);
+                        await fetchJson(
+                            `https://pypi.org/pypi/${encodeURIComponent(name)}/${encodeURIComponent(version)}/json`,
+                        );
+                        v2log('loadRoot prefetch ok', `${(performance.now() - t0).toFixed(1)}ms`);
+                    } catch {
+                        v2log('loadRoot prefetch failed');
+                        rootError.value = 'Could not load that package at that version. Check name and version.';
+                        return;
+                    }
+                    const node = createEmptyNode(
+                        name,
+                        version,
+                        uniqueStrings(rootExtrasSelected.value),
+                        envChoiceToList(globalPythonSelected.value),
+                        envChoiceToList(globalPlatformSelected.value),
+                    );
+                    v2log('loadRoot createEmptyNode', 'node.id=' + node.id);
+                    rootNode.value = node;
+                    v2log('loadRoot await loadDepsIntoNode ...');
+                    await loadDepsIntoNode(rootNode.value);
+                    await Vue.nextTick();
+                    v2log(
+                        'loadRoot after nextTick',
+                        'rootNode.loading=' + rootNode.value.loading,
+                        'rootNode.loaded=' + rootNode.value.loaded,
+                        `${(performance.now() - t0).toFixed(1)}ms total`,
+                    );
+                    if (rootNode.value.fetchError) {
+                        rootError.value = rootNode.value.fetchError;
+                    }
+                };
+
+                let autoLoadRootTimer = null;
+                Vue.watch(
+                    [packagesReady, rootName, rootVersion, rootExtrasSelected, rootVersionsLoading, rootExtrasLoading],
+                    () => {
+                        clearTimeout(autoLoadRootTimer);
+                        autoLoadRootTimer = setTimeout(() => {
+                            if (!packagesReady.value) return;
+                            if (rootVersionsLoading.value || rootExtrasLoading.value) return;
+                            const name = rootName.value.trim().toLowerCase();
+                            const version = rootVersion.value.trim();
+                            if (!name || !version) return;
+                            loadRoot();
+                        }, 400);
+                    },
+                    { deep: true },
+                );
+
+                return {
+                    rootName,
+                    rootVersion,
+                    rootError,
+                    rootNode,
+                    packagesReady,
+                    allPackageNames,
+                    rootVersionOptions,
+                    rootVersionsLoading,
+                    rootExtrasList,
+                    rootExtrasLoading,
+                    rootExtrasSelected,
+                    globalPythonSelected,
+                    globalPlatformSelected,
+                    pythonVersionChoices: PYTHON_VERSION_CHOICES,
+                    platformChoices: PLATFORM_CHOICES,
+                };
+            },
+        };
+
+        Vue.createApp({
+            components: { PypiDepTree, FilterCombobox },
+        }).mount('#app');
+    </script>
+</body>
+</html>
