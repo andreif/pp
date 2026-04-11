@@ -31,7 +31,7 @@
             <p class="text-sm text-gray-500 max-w-2xl pb-6">
                 Load a <span class="font-mono text-indigo-300/90">uv.lock</span> file. The graph is the union of dependency trees from project roots
                 (<span class="font-mono">source</span> is <span class="font-mono">virtual</span> or <span class="font-mono">editable</span>), with shared packages merged into one node.
-                Layout is a force simulation (nodes and edges you can drag and zoom). Same environment filters as
+                Layout is radial by tree depth (depth 1 on one ring, depth 2 at twice the radius, etc.). Use <span class="font-mono">Ring spacing</span> to scale how far rings sit from the center. Zoom and pan with the mouse. Same environment filters as
                 <a href="v3.html" class="text-indigo-400 hover:text-indigo-200 underline">v3</a>.
                 Version ranges come from each parent package's <span class="font-mono">[package.metadata] requires-dist</span> / <span class="font-mono">requires-dev</span> when uv wrote them (e.g. <span class="font-mono">html2text</span> <span class="font-mono">>=2024.2.26</span>), else from <span class="font-mono">[manifest].constraints</span>. Edges show that constraint; resolved versions appear on nodes.
             </p>
@@ -132,10 +132,26 @@
                         <span>Labels</span>
                         <input v-model="showLabels" type="checkbox" class="rounded border-indigo-600" />
                     </label>
+                    <label
+                        class="flex min-w-0 flex-[1_1_14rem] max-w-md items-center gap-2 text-xs text-gray-500"
+                    >
+                        <span class="shrink-0 whitespace-nowrap">Ring spacing</span>
+                        <input
+                            v-model.number="baseRadiusScale"
+                            type="range"
+                            min="2"
+                            max="8"
+                            step="0.1"
+                            class="min-w-0 flex-1 accent-indigo-500"
+                        />
+                        <span class="w-11 shrink-0 font-mono text-indigo-300/90 tabular-nums">{{
+                            baseRadiusScale.toFixed(2)
+                        }}</span>
+                    </label>
                 </div>
                 <div class="flex flex-wrap gap-4 px-3 py-2 text-xs border-b border-indigo-800/40">
                     <span><span class="inline-block h-2 w-2 rounded-full bg-teal-400 align-middle mr-1"></span> project root</span>
-                    <span><span class="inline-block h-2 w-2 rounded-full bg-indigo-400 align-middle mr-1"></span> dependency</span>
+                    <span><span class="inline-block h-2 w-2 rounded-full bg-indigo-400 align-middle mr-1"></span> dependency (deeper = smaller, darker)</span>
                     <span class="text-amber-400/90">dashed edge = ambiguous resolution</span>
                     <span class="text-gray-500"><span class="font-mono">*</span> after a constraint or <span class="font-mono">==</span> pin = highest semver when several versions exist in the lockfile.</span>
                     <span class="text-gray-500">Nodes show <span class="font-mono">name</span>, optional <span class="font-mono">[extras]</span> from the incoming edge, and <span class="font-mono">==version</span>. Edges show the declared constraint (or a lock <span class="font-mono">==</span> pin when there is no specifier). Hover a line for full detail.</span>
@@ -581,12 +597,64 @@
             return name;
         }
 
+        function dependencyNodeStyle(d) {
+            if (d.isRoot) {
+                return { r: 11, fill: '#2dd4bf', stroke: '#134e4a' };
+            }
+            const depth = d.depthMin != null ? d.depthMin : 1;
+            const t = Math.min(Math.max(depth - 1, 0) / 12, 1);
+            const r = 11 - t * 4.5;
+            const fill = d3.interpolateRgb('#c4b5fd', '#4338ca')(t);
+            const stroke = d3.interpolateRgb('#818cf8', '#312e81')(t);
+            return { r: Math.max(5.5, r), fill, stroke };
+        }
+
+        function layoutRadialConcentric(nodes, w, h, radiusScale = 1) {
+            const cx = w / 2;
+            const cy = h / 2;
+            const scale =
+                Number.isFinite(radiusScale) && radiusScale > 0 ? radiusScale : 1;
+            const byDepth = new Map();
+            for (const n of nodes) {
+                const depth = n.depthMin != null ? n.depthMin : 0;
+                if (!byDepth.has(depth)) byDepth.set(depth, []);
+                byDepth.get(depth).push(n);
+            }
+            const depthsSorted = [...byDepth.keys()].sort((a, b) => a - b);
+            const maxDepth = depthsSorted.length ? Math.max(...depthsSorted) : 0;
+            const minDim = Math.min(w, h);
+            const baseR =
+                (maxDepth > 0 ? (minDim * 0.38) / maxDepth : minDim * 0.35) * scale;
+
+            for (const depth of depthsSorted) {
+                const list = byDepth.get(depth);
+                list.sort((a, b) => a.id.localeCompare(b.id));
+                const n = list.length;
+                const ringR = depth * baseR;
+                const stagger = depth % 2 ? Math.PI / Math.max(n * 2, 1) : 0;
+                if (depth === 0) {
+                    const r0 = n > 1 ? Math.min(18, baseR * 0.22) : 0;
+                    list.forEach((d, i) => {
+                        const angle = (2 * Math.PI * i) / n - Math.PI / 2 + stagger;
+                        d.x = cx + r0 * Math.cos(angle);
+                        d.y = cy + r0 * Math.sin(angle);
+                    });
+                } else {
+                    list.forEach((d, i) => {
+                        const angle = (2 * Math.PI * i) / n - Math.PI / 2 + stagger;
+                        d.x = cx + ringR * Math.cos(angle);
+                        d.y = cy + ringR * Math.sin(angle);
+                    });
+                }
+            }
+        }
+
         function flattenTreeToGraph(roots, allPackages, manifestConstraints, metadataSpecByParent) {
             const all = Array.isArray(allPackages) ? allPackages : [];
             const nodes = new Map();
             const edgeMap = new Map();
 
-            function visit(node) {
+            function visit(node, depth) {
                 const id = pkgKey(node.pkg);
                 const existing = nodes.get(id);
                 const mergedExtras = unionDependencyExtras(existing?.extrasDisplay, node.dependencyExtras);
@@ -597,9 +665,11 @@
                         version: node.pkg.version,
                         isRoot: isProjectRoot(node.pkg),
                         extrasDisplay: mergedExtras,
+                        depthMin: depth,
                     });
                 } else {
                     existing.extrasDisplay = mergedExtras;
+                    existing.depthMin = Math.min(existing.depthMin, depth);
                 }
                 for (const e of node.edges) {
                     if (!e.child) continue;
@@ -641,10 +711,10 @@
                             if (ex.shortLabel.length > 44) ex.shortLabel = `${ex.shortLabel.slice(0, 42)}…`;
                         }
                     }
-                    visit(e.child);
+                    visit(e.child, depth + 1);
                 }
             }
-            roots.forEach(visit);
+            roots.forEach((r) => visit(r, 0));
             return { nodes: [...nodes.values()], links: [...edgeMap.values()] };
         }
 
@@ -663,6 +733,7 @@
                 const globalPlatformMachineSelected = Vue.ref('');
                 const graphHost = Vue.ref(null);
                 const showLabels = Vue.ref(true);
+                const baseRadiusScale = Vue.ref(2);
                 const manifestConstraints = Vue.ref(null);
                 const metadataSpecByParent = Vue.ref(null);
 
@@ -785,17 +856,12 @@
                     reader.readAsText(f, 'utf-8');
                 };
 
-                let simulation = null;
                 let zoomBehavior = null;
                 let fitFn = null;
                 let resetFn = null;
                 let labelStyleFn = null;
 
                 function stopGraph() {
-                    if (simulation) {
-                        simulation.stop();
-                        simulation = null;
-                    }
                     labelStyleFn = null;
                     const el = graphHost.value;
                     if (el) {
@@ -822,14 +888,27 @@
                     const w = el.clientWidth || 800;
                     const h = el.clientHeight || 480;
 
-                    const nodes = rawNodes.map((n) => ({ ...n }));
-                    const links = rawLinks.map((l) => ({
-                        source: l.source,
-                        target: l.target,
-                        ambiguous: l.ambiguous,
-                        detailFull: l.detailFull,
-                        shortLabel: l.shortLabel,
-                    }));
+                    const nodes = rawNodes.map((n) => {
+                        const vis = dependencyNodeStyle(n);
+                        return { ...n, nodeR: vis.r, nodeFill: vis.fill, nodeStroke: vis.stroke };
+                    });
+                    layoutRadialConcentric(nodes, w, h, baseRadiusScale.value);
+
+                    const nodeById = new Map(nodes.map((n) => [n.id, n]));
+                    const links = rawLinks
+                        .map((l) => {
+                            const s = nodeById.get(l.source);
+                            const t = nodeById.get(l.target);
+                            if (!s || !t) return null;
+                            return {
+                                source: s,
+                                target: t,
+                                ambiguous: l.ambiguous,
+                                detailFull: l.detailFull,
+                                shortLabel: l.shortLabel,
+                            };
+                        })
+                        .filter(Boolean);
 
                     const svg = d3
                         .select(el)
@@ -846,47 +925,6 @@
                     };
                     zoomBehavior = d3.zoom().scaleExtent([0.15, 8]).on('zoom', zoomed);
                     svg.call(zoomBehavior);
-
-                    const spread = Math.min(1.35, 1 + nodes.length / 400);
-                    simulation = d3
-                        .forceSimulation(nodes)
-                        .velocityDecay(0.22)
-                        .force(
-                            'link',
-                            d3
-                                .forceLink(links)
-                                .id((d) => d.id)
-                                .distance((d) =>
-                                    (d.ambiguous ? 150 : 120) * spread,
-                                )
-                                .strength(0.2),
-                        )
-                        .force(
-                            'charge',
-                            d3.forceManyBody().strength(-420 * spread),
-                        )
-                        .force('center', d3.forceCenter(w / 2, h / 2))
-                        .force(
-                            'collision',
-                            d3.forceCollide().radius(52 * spread),
-                        );
-
-                    const drag = d3
-                        .drag()
-                        .on('start', (event, d) => {
-                            if (!event.active) simulation.alphaTarget(0.25).restart();
-                            d.fx = d.x;
-                            d.fy = d.y;
-                        })
-                        .on('drag', (event, d) => {
-                            d.fx = event.x;
-                            d.fy = event.y;
-                        })
-                        .on('end', (event, d) => {
-                            if (!event.active) simulation.alphaTarget(0);
-                            d.fx = null;
-                            d.fy = null;
-                        });
 
                     const linkG = gRoot
                         .append('g')
@@ -918,20 +956,19 @@
                         .attr('class', 'graph-nodes')
                         .selectAll('g')
                         .data(nodes)
-                        .join('g')
-                        .call(drag);
+                        .join('g');
 
                     node
                         .append('circle')
-                        .attr('r', 10)
-                        .attr('fill', (d) => (d.isRoot ? '#2dd4bf' : '#818cf8'))
-                        .attr('stroke', '#312e81')
+                        .attr('r', (d) => d.nodeR)
+                        .attr('fill', (d) => d.nodeFill)
+                        .attr('stroke', (d) => d.nodeStroke)
                         .attr('stroke-width', 1.5);
 
                     const labels = node
                         .append('text')
                         .attr('text-anchor', 'middle')
-                        .attr('y', 14)
+                        .attr('y', (d) => d.nodeR + 4)
                         .attr('fill', '#a5b4fc')
                         .attr('font-family', 'ui-monospace, monospace')
                         .style('pointer-events', 'none');
@@ -957,11 +994,13 @@
                             .text(`==${d.version}`);
                     });
 
-                    node.append('title').text(
-                        (d) => `${pkgLabelWithExtras(d.name, d.extrasDisplay)}==${d.version}`,
-                    );
+                    node.append('title').text((d) => {
+                        const base = `${pkgLabelWithExtras(d.name, d.extrasDisplay)}==${d.version}`;
+                        if (d.isRoot) return base;
+                        return `${base} (depth ${d.depthMin})`;
+                    });
 
-                    simulation.on('tick', () => {
+                    function drawRadial() {
                         linkG.each(function tickLink(d) {
                             const g = d3.select(this);
                             const sx = d.source.x;
@@ -984,7 +1023,8 @@
                         });
 
                         node.attr('transform', (d) => `translate(${d.x},${d.y})`);
-                    });
+                    }
+                    drawRadial();
 
                     const doFit = () => {
                         const pad = 40;
@@ -1017,7 +1057,6 @@
                     fitFn = doFit;
                     resetFn = doReset;
 
-                    for (let i = 0; i < 280; i += 1) simulation.tick();
                     doFit();
 
                     labelStyleFn = () => {
@@ -1040,6 +1079,10 @@
                         });
                     },
                 );
+
+                Vue.watch(baseRadiusScale, () => {
+                    Vue.nextTick(() => runGraph());
+                });
 
                 Vue.onMounted(() => {
                     Vue.nextTick(() => runGraph());
@@ -1078,6 +1121,7 @@
                     graphNodeCount,
                     graphStats,
                     showLabels,
+                    baseRadiusScale,
                     fitGraph,
                     resetZoom,
                 };
