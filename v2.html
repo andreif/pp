@@ -15,7 +15,7 @@
     </script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-indigo-950 p-2 lg:p-8 lg:px-24 text-gray-300 min-h-screen">
+<body class="bg-slate-950 p-2 lg:p-8 lg:px-24 text-gray-300 min-h-screen">
     <div id="app">
         <pypi-dep-tree></pypi-dep-tree>
     </div>
@@ -32,7 +32,7 @@
                 :placeholder="placeholder"
                 autocomplete="off"
                 spellcheck="false"
-                class="w-full placeholder-gray-500 bg-indigo-900 rounded-md p-2 border border-indigo-700/50 text-sm font-mono disabled:opacity-50"
+                class="w-full placeholder-gray-500 bg-slate-900 rounded-md p-2 border border-slate-700/50 text-sm font-mono disabled:opacity-50"
                 @input="onInput"
                 @focus="onFocus"
                 @keydown="onInputKeydown"
@@ -42,15 +42,15 @@
                 v-show="open && filtered.length"
                 ref="listEl"
                 role="listbox"
-                class="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-indigo-700/80 bg-indigo-950 py-1 shadow-lg"
+                class="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-slate-700/80 bg-slate-950 py-1 shadow-lg"
             >
                 <li
                     v-for="(opt, index) in filtered"
                     :key="opt"
                     role="option"
                     :aria-selected="highlightIndex === index"
-                    class="cursor-pointer px-3 py-1.5 text-sm font-mono hover:bg-indigo-800/80"
-                    :class="highlightIndex === index ? 'bg-indigo-800/90 text-indigo-100' : ''"
+                    class="cursor-pointer px-3 py-1.5 text-sm font-mono hover:bg-slate-800/80"
+                    :class="highlightIndex === index ? 'bg-slate-800/90 text-slate-100' : ''"
                     @mousedown.prevent="pick(opt)"
                 >
                     {{ opt }}
@@ -66,8 +66,8 @@
                 Type to filter choices in each field. Package names come from the PyPI simple index; versions and extras load from metadata when possible. Then load dependencies and repeat for subpackages.
             </p>
 
-            <div class="rounded-lg border border-indigo-800/80 bg-indigo-900/40 p-4 mb-6 max-w-3xl space-y-4">
-                <h2 class="text-lg font-semibold text-indigo-200">Environment</h2>
+            <div class="rounded-lg border border-slate-800/80 bg-slate-900/40 p-4 mb-6 max-w-3xl space-y-4">
+                <h2 class="text-lg font-semibold text-slate-200">Environment</h2>
                 <p class="text-xs text-gray-500 pb-2">
                     Used for marker filtering (<span class="font-mono">python_version</span>,
                     <span class="font-mono">sys_platform</span>,
@@ -82,7 +82,7 @@
                         <span class="text-xs text-gray-500">Platform (sys_platform)</span>
                         <select
                             v-model="globalPlatformSelected"
-                            class="w-full max-w-xs rounded-md border border-indigo-700/50 bg-indigo-900 p-2 text-sm font-mono text-indigo-100 disabled:cursor-not-allowed"
+                            class="w-full max-w-xs rounded-md border border-slate-700/50 bg-slate-900 p-2 text-sm font-mono text-slate-100 disabled:cursor-not-allowed"
                         >
                             <option value="">Any (no sys_platform filter)</option>
                             <option v-for="pl in platformChoices" :key="'env-pl-' + pl" :value="pl">{{ pl }}</option>
@@ -93,7 +93,7 @@
                         <span class="text-xs text-gray-500">Python version (python_version markers)</span>
                         <select
                             v-model="globalPythonSelected"
-                            class="w-full max-w-xs rounded-md border border-indigo-700/50 bg-indigo-900 p-2 text-sm font-mono text-indigo-100 disabled:cursor-not-allowed"
+                            class="w-full max-w-xs rounded-md border border-slate-700/50 bg-slate-900 p-2 text-sm font-mono text-slate-100 disabled:cursor-not-allowed"
                         >
                             <option value="">Any (no python_version filter)</option>
                             <option v-for="py in pythonVersionChoices" :key="'env-py-' + py" :value="py">{{ py }}</option>
@@ -104,7 +104,7 @@
                         <span class="text-xs text-gray-500">Machine (platform_machine)</span>
                         <select
                             v-model="globalPlatformMachineSelected"
-                            class="w-full max-w-xs rounded-md border border-indigo-700/50 bg-indigo-900 p-2 text-sm font-mono text-indigo-100 disabled:cursor-not-allowed"
+                            class="w-full max-w-xs rounded-md border border-slate-700/50 bg-slate-900 p-2 text-sm font-mono text-slate-100 disabled:cursor-not-allowed"
                         >
                             <option value="">Any (no platform_machine filter)</option>
                             <option v-for="m in platformMachineChoices" :key="'env-pm-' + m" :value="m">{{ m }}</option>
@@ -115,8 +115,8 @@
                 </fieldset>
             </div>
 
-            <div class="rounded-lg border border-indigo-800/80 bg-indigo-900/40 p-4 mb-6 max-w-3xl space-y-4">
-                <h2 class="text-lg font-semibold text-indigo-200">Root</h2>
+            <div class="rounded-lg border border-slate-800/80 bg-slate-900/40 p-4 mb-6 max-w-3xl space-y-4">
+                <h2 class="text-lg font-semibold text-slate-200">Root</h2>
                 <p v-if="!packagesReady" class="text-sm text-amber-200/90">Loading package index from PyPI...</p>
                 <fieldset
                     :disabled="!packagesReady"
@@ -151,15 +151,15 @@
                             <p v-if="rootExtrasLoading" class="text-xs text-gray-500">Loading extras for this release...</p>
                             <div
                                 v-else-if="rootExtrasList.length"
-                                class="flex max-h-36 flex-wrap gap-2 overflow-y-auto rounded-md border border-indigo-800/50 bg-indigo-950/50 p-2"
+                                class="flex max-h-36 flex-wrap gap-2 overflow-y-auto rounded-md border border-slate-800/50 bg-slate-950/50 p-2"
                             >
                                 <label
                                     v-for="ex in rootExtrasList"
                                     :key="ex"
-                                    class="flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-sm hover:bg-indigo-800/40"
+                                    class="flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-sm hover:bg-slate-800/40"
                                 >
-                                    <input v-model="rootExtrasSelected" type="checkbox" :value="ex" class="rounded border-indigo-600" />
-                                    <span class="font-mono text-indigo-200">{{ ex }}</span>
+                                    <input v-model="rootExtrasSelected" type="checkbox" :value="ex" class="rounded border-slate-600" />
+                                    <span class="font-mono text-slate-200">{{ ex }}</span>
                                 </label>
                             </div>
                             <p v-else-if="rootName.trim() && rootVersion.trim() && !rootExtrasLoading" class="text-xs text-gray-500">
@@ -171,7 +171,7 @@
                 <p v-if="rootError" class="text-amber-400 text-sm">{{ rootError }}</p>
             </div>
 
-            <div v-if="rootNode" class="rounded-lg border border-indigo-800/80 bg-indigo-900/20 p-4">
+            <div v-if="rootNode" class="rounded-lg border border-slate-800/80 bg-slate-900/20 p-4">
                 <tree-node :node="rootNode" :depth="0" />
             </div>
         </div>
@@ -180,16 +180,16 @@
     <script type="text/x-template" id="tree-node-tpl">
         <div class="tree-node">
             <div
-                class="flex flex-wrap items-baseline gap-2 py-2 border-l-2 border-indigo-600/50 pl-3 -ml-0"
+                class="flex flex-wrap items-baseline gap-2 py-2 border-l-2 border-slate-600/50 pl-3 -ml-0"
                 :style="indentStyle">
-                <span class="font-mono text-indigo-200">{{ node.name }}</span>
+                <span class="font-mono text-slate-200">{{ node.name }}</span>
                 <span class="text-gray-500 font-mono text-sm">=={{ node.version }}</span>
-                <span v-if="node.extras.length" class="text-xs text-indigo-400">[{{ node.extras.join(', ') }}]</span>
+                <span v-if="node.extras.length" class="text-xs text-slate-400">[{{ node.extras.join(', ') }}]</span>
                 <span v-if="node.platforms?.length" class="text-xs text-gray-500">{{ node.platforms.join(', ') }}</span>
                 <span v-if="node.platformMachines?.length" class="text-xs text-gray-500">{{ node.platformMachines.join(', ') }}</span>
                 <span v-if="node.pythonVersions?.length" class="text-xs text-gray-500">py {{ node.pythonVersions.join(', ') }}</span>
                 <button v-if="!node.loaded" type="button" @click="loadSelf"
-                    class="text-xs rounded bg-indigo-700 hover:bg-indigo-600 px-2 py-0.5">Load deps</button>
+                    class="text-xs rounded bg-slate-700 hover:bg-slate-600 px-2 py-0.5">Load deps</button>
                 <span v-if="node.loading" class="text-xs text-gray-500">Loading...</span>
                 <span v-if="node.fetchError" class="text-xs text-amber-400">{{ node.fetchError }}</span>
             </div>
@@ -199,54 +199,55 @@
             </div>
 
             <div v-if="node.loaded && node.filteredRequires.length" class="pl-2 space-y-3 pb-4">
-                <div v-for="(req, idx) in node.filteredRequires" :key="idx"
-                    class="rounded-md bg-indigo-950/60 border border-indigo-800/40 p-3 text-sm">
-                    <div class="font-mono text-gray-400 break-all mb-2">{{ req.raw }}</div>
-                    <div class="flex flex-col gap-3">
-                        <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
-                            <label class="flex min-w-[12rem] flex-1 flex-col gap-1">
-                                <span class="text-xs text-gray-500">Version</span>
-                                <filter-combobox
-                                    v-model="req.childVersion"
-                                    :options="req.versions"
-                                    :loading="req.versionsLoading"
-                                    placeholder="Filter versions or type a release"
-                                    @focus="ensureVersions(req)"
-                                    @update:model-value="onChildVersionInput(req)"
-                                />
-                            </label>
-                            <button type="button" :disabled="!resolvedChildVersion(req)"
-                                @click="addChild(req)"
-                                class="rounded-md px-3 py-2 text-sm font-medium shrink-0 disabled:opacity-40 disabled:cursor-not-allowed bg-teal-700 hover:bg-teal-600 text-white">
-                                Add to tree
-                            </button>
-                        </div>
-                        <div v-if="resolvedChildVersion(req)" class="flex flex-col gap-3 border-t border-indigo-800/30 pt-3">
-                            <div class="flex flex-col gap-2">
-                                <span class="text-xs text-gray-500">Extras</span>
-                                <p v-if="req.extrasLoading" class="text-xs text-gray-500">Loading extras...</p>
-                                <div
-                                    v-else-if="req.childExtrasList.length"
-                                    class="flex max-h-28 flex-wrap gap-2 overflow-y-auto rounded-md border border-indigo-800/50 bg-indigo-950/50 p-2"
-                                >
-                                    <label
-                                        v-for="ex in req.childExtrasList"
-                                        :key="ex"
-                                        class="flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-sm hover:bg-indigo-800/40"
-                                    >
-                                        <input v-model="req.childExtrasSelected" type="checkbox" :value="ex" class="rounded border-indigo-600" />
-                                        <span class="font-mono text-indigo-200">{{ ex }}</span>
-                                    </label>
-                                </div>
-                                <p v-else class="text-xs text-gray-500">No extras declared.</p>
+                <div v-for="(req, idx) in node.filteredRequires" :key="idx">
+                    <div
+                        v-if="req.stub"
+                        class="rounded-md border border-dashed border-slate-700/50 bg-slate-950/40 p-3 text-sm text-gray-500"
+                    >
+                        <div class="font-mono break-all whitespace-pre-wrap">{{ req.raw }}</div>
+                        <p class="text-xs mt-2 text-gray-600">
+                            Same package as an earlier card above; constraints are merged there. No separate version or
+                            &quot;Add to tree&quot; here.
+                        </p>
+                    </div>
+                    <div
+                        v-else
+                        class="rounded-md bg-slate-950/60 border border-slate-800/40 p-3 text-sm"
+                    >
+                        <div class="font-mono text-gray-400 break-all whitespace-pre-wrap mb-2">{{ req.raw }}</div>
+                        <p v-if="req.extrasFromReq.length" class="text-xs text-slate-300/90 mb-2">
+                            Install as <span class="font-mono text-slate-200">{{ req.depName }}[{{ req.extrasFromReq.join(', ') }}]</span>
+                            for the next &quot;Load deps&quot; (same as pip for that edge).
+                        </p>
+                        <p v-if="req.specifierEffective" class="text-xs text-gray-500 mb-2">
+                            Effective version range (intersection of merged constraints):
+                            <span class="font-mono text-slate-200">{{ req.specifierEffective }}</span>
+                        </p>
+                        <div class="flex flex-col gap-3">
+                            <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+                                <label class="flex min-w-[12rem] flex-1 flex-col gap-1">
+                                    <span class="text-xs text-gray-500">Version</span>
+                                    <filter-combobox
+                                        v-model="req.childVersion"
+                                        :options="req.versions"
+                                        :loading="req.versionsLoading"
+                                        placeholder="Filter versions or type a release"
+                                        @focus="ensureVersions(req)"
+                                    />
+                                </label>
+                                <button type="button" :disabled="!resolvedChildVersion(req)"
+                                    @click="addChild(req)"
+                                    class="rounded-md px-3 py-2 text-sm font-medium shrink-0 disabled:opacity-40 disabled:cursor-not-allowed bg-teal-700 hover:bg-teal-600 text-white">
+                                    Add to tree
+                                </button>
                             </div>
                         </div>
+                        <p v-if="req.addError" class="mt-2 text-xs text-amber-400">{{ req.addError }}</p>
                     </div>
-                    <p v-if="req.addError" class="mt-2 text-xs text-amber-400">{{ req.addError }}</p>
                 </div>
             </div>
 
-            <div v-if="node.children.length" class="pl-4 border-l border-indigo-800/30 space-y-1">
+            <div v-if="node.children.length" class="pl-4 border-l border-slate-800/30 space-y-1">
                 <tree-node v-for="(ch, i) in node.children" :key="ch.id" :node="ch" :depth="depth + 1" />
             </div>
         </div>
@@ -271,8 +272,6 @@
             const tid = setTimeout(fn, 48);
             return () => clearTimeout(tid);
         }
-
-        const EXTRA_RE = /extra\s*==\s*["']([^"']+)["']/i;
 
         const PYTHON_VERSION_CHOICES = ['3.14', '3.13', '3.12', '3.11', '3.10', '3.9'];
         const PLATFORM_CHOICES = ['linux', 'darwin', 'win32'];
@@ -415,15 +414,226 @@
             return { main, markers };
         }
 
-        function requirementAppliesForExtras(markers, selectedExtras) {
-            const extraMarkers = [];
-            for (const m of markers) {
-                const x = m.match(EXTRA_RE);
-                if (x) extraMarkers.push(x[1]);
+        function parseSpecifierFromMain(main, depName) {
+            const s0 = String(main).trim();
+            const re = new RegExp(
+                '^' + depName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(\\[[^\\]]*\\])?(.*)$',
+                'i',
+            );
+            const m = s0.match(re);
+            if (!m) return '';
+            const rest = (m[2] || '').trim();
+            if (rest.startsWith('@')) return '';
+            return rest;
+        }
+
+        function parseExtrasFromReqMain(main, depName) {
+            const s0 = String(main).trim();
+            const re = new RegExp(
+                '^' + depName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(\\[[^\\]]*\\])',
+                'i',
+            );
+            const m = s0.match(re);
+            if (!m || !m[1]) return [];
+            const inner = m[1].slice(1, -1).trim();
+            if (!inner) return [];
+            return inner
+                .split(',')
+                .map((x) => x.trim())
+                .filter(Boolean);
+        }
+
+        function inferExtrasFromRawLines(rawText, depName) {
+            const esc = depName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const re = new RegExp('^' + esc + '\\s*\\[([^\\]]+)\\]', 'gim');
+            const out = [];
+            let m;
+            while ((m = re.exec(String(rawText))) !== null) {
+                const inner = m[1].trim();
+                if (!inner) continue;
+                for (const p of inner.split(',').map((x) => x.trim()).filter(Boolean)) out.push(p);
             }
-            if (extraMarkers.length === 0) return true;
+            return out;
+        }
+
+        function parseVersionCore(s) {
+            const raw = String(s).trim().toLowerCase();
+            if (!raw) return null;
+            let epoch = 0;
+            let rest = raw;
+            const em = rest.match(/^(\d+)!/);
+            if (em) {
+                epoch = parseInt(em[1], 10);
+                rest = rest.slice(em[0].length);
+            }
+            const localSep = rest.indexOf('+');
+            if (localSep >= 0) rest = rest.slice(0, localSep);
+            const rm = rest.match(/^(\d+(?:\.\d+)*)(.*)$/);
+            if (!rm) return null;
+            const release = rm[1].split('.').map((x) => parseInt(x, 10));
+            const suffix = (rm[2] || '').replace(/^\./, '');
+            return { epoch, release, suffix };
+        }
+
+        function compareVersionCore(a, b) {
+            const pa = parseVersionCore(a);
+            const pb = parseVersionCore(b);
+            if (!pa || !pb) return null;
+            if (pa.epoch !== pb.epoch) return pa.epoch - pb.epoch;
+            const len = Math.max(pa.release.length, pb.release.length);
+            for (let i = 0; i < len; i += 1) {
+                const x = pa.release[i] ?? 0;
+                const y = pb.release[i] ?? 0;
+                if (x !== y) return x - y;
+            }
+            if (pa.suffix === pb.suffix) return 0;
+            if (!pa.suffix && !pb.suffix) return 0;
+            if (!pa.suffix) return 1;
+            if (!pb.suffix) return -1;
+            return pa.suffix < pb.suffix ? -1 : pa.suffix > pb.suffix ? 1 : 0;
+        }
+
+        function releasePrefixMatch(version, prefixDot) {
+            const pv = parseVersionCore(version);
+            if (!pv) return false;
+            const parts = String(prefixDot)
+                .split('.')
+                .map((x) => x.trim())
+                .filter(Boolean);
+            const nums = parts.map((x) => parseInt(x, 10));
+            if (nums.some((n) => Number.isNaN(n))) return false;
+            for (let i = 0; i < nums.length; i += 1) {
+                if (pv.release[i] !== nums[i]) return false;
+            }
+            return true;
+        }
+
+        function matchSingleSpecifier(version, part) {
+            const t = String(part).trim();
+            if (!t) return null;
+            const compat = t.match(/^\s*~=\s*(.+)$/);
+            if (compat) {
+                const v = compat[1].trim();
+                const pc = parseVersionCore(v);
+                if (!pc || !pc.release.length) return null;
+                const rel = pc.release;
+                if (rel.length >= 2) {
+                    const prefix = rel.slice(0, -1).join('.');
+                    const a = matchSingleSpecifier(version, `>=${v}`);
+                    const b = matchSingleSpecifier(version, `==${prefix}.*`);
+                    if (a === null || b === null) return null;
+                    return a && b;
+                }
+                const a = matchSingleSpecifier(version, `>=${v}`);
+                const b = matchSingleSpecifier(version, `==${rel[0]}.*`);
+                if (a === null || b === null) return null;
+                return a && b;
+            }
+            const m = t.match(/^\s*(===|==|!=|<=|>=|<|>)\s*(.+)$/);
+            if (!m) return null;
+            const op = m[1];
+            let rhs = m[2].trim();
+            const wild = rhs.endsWith('.*');
+            if (wild) rhs = rhs.slice(0, -2);
+            if (op === '===') {
+                return String(version).trim() === rhs;
+            }
+            if (wild) {
+                if (op === '==' || op === '!=') {
+                    const ok = releasePrefixMatch(version, rhs);
+                    return op === '==' ? ok : !ok;
+                }
+                return null;
+            }
+            const c = compareVersionCore(version, rhs);
+            if (c === null) return null;
+            if (op === '==') return c === 0;
+            if (op === '!=') return c !== 0;
+            if (op === '>=') return c >= 0;
+            if (op === '<=') return c <= 0;
+            if (op === '>') return c > 0;
+            if (op === '<') return c < 0;
+            return null;
+        }
+
+        function filterVersionsBySpec(versions, specString) {
+            const list = Array.isArray(versions) ? versions : [];
+            if (!specString || !String(specString).trim()) return list.slice();
+            const parts = String(specString)
+                .split(',')
+                .map((x) => x.trim())
+                .filter(Boolean);
+            const out = [];
+            for (const v of list) {
+                let drop = false;
+                for (const p of parts) {
+                    const r = matchSingleSpecifier(v, p);
+                    if (r === null) return list.slice();
+                    if (!r) {
+                        drop = true;
+                        break;
+                    }
+                }
+                if (!drop) out.push(v);
+            }
+            return out.length ? out : list.slice();
+        }
+
+        function simplifySpecifierIntersection(spec) {
+            const parts = String(spec || '')
+                .split(',')
+                .map((x) => x.trim())
+                .filter(Boolean);
+            if (parts.length === 0) return '';
+            if (parts.length === 1) return parts[0];
+            const ge = [];
+            const lt = [];
+            for (const p of parts) {
+                const m = p.match(/^(>=|<)\s*(.+)$/);
+                if (!m) return null;
+                const op = m[1];
+                const v = m[2].trim();
+                if (v.endsWith('.*')) return null;
+                if (parseVersionCore(v) === null) return null;
+                if (op === '>=') ge.push(v);
+                else if (op === '<') lt.push(v);
+                else return null;
+            }
+            if (ge.length === 0 && lt.length === 0) return null;
+            let lo = null;
+            let hi = null;
+            if (ge.length) {
+                lo = ge.reduce((a, b) => (compareVersionCore(a, b) >= 0 ? a : b));
+            }
+            if (lt.length) {
+                hi = lt.reduce((a, b) => (compareVersionCore(a, b) <= 0 ? a : b));
+            }
+            if (lo !== null && hi !== null) {
+                const c = compareVersionCore(lo, hi);
+                if (c === null || c >= 0) return null;
+            }
+            const bits = [];
+            if (lo) bits.push(`>=${lo}`);
+            if (hi) bits.push(`<${hi}`);
+            return bits.join(',');
+        }
+
+        function requirementAppliesForExtras(markers, selectedExtras) {
             const set = new Set(selectedExtras.map((e) => e.toLowerCase()));
-            return extraMarkers.some((e) => set.has(e.toLowerCase()));
+            for (const marker of markers) {
+                if (!marker) continue;
+                const extraIds = [...marker.matchAll(/extra\s*==\s*["']([^"']+)["']/gi)].map((m) =>
+                    m[1].toLowerCase(),
+                );
+                if (extraIds.length === 0) continue;
+                const hasOr = /\s+or\s+/i.test(marker);
+                if (hasOr && extraIds.length > 1) {
+                    if (!extraIds.some((x) => set.has(x))) return false;
+                } else if (!extraIds.every((x) => set.has(x))) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         function filterRequiresDist(requiresDist, selectedExtras, pythonVersions, platforms, machines) {
@@ -485,6 +695,24 @@
             return declared
                 .filter((d) => referenced.has(String(d).toLowerCase()))
                 .sort((a, b) => a.localeCompare(b));
+        }
+
+        async function fetchAndFilterVersionsForReq(req) {
+            if (req.versionsFetched || req.versionsLoading) return;
+            req.versionsLoading = true;
+            try {
+                const all = await listVersions(req.depName);
+                req.versions = filterVersionsBySpec(all, req.specifierEffective || '');
+                req.versionsFetched = true;
+                if (!(req.childVersion || '').trim() && req.versions.length) {
+                    req.childVersion = req.versions[0];
+                }
+            } catch {
+                req.versions = [];
+                req.versionsFetched = true;
+            } finally {
+                req.versionsLoading = false;
+            }
         }
 
         function uniqueStrings(arr) {
@@ -700,7 +928,14 @@
                         if (!q) {
                             filtered.value = opts.slice(0, 150);
                         } else {
-                            filtered.value = opts.filter((o) => o.toLowerCase().includes(q)).slice(0, 150);
+                            const exact = opts.some((o) => o.toLowerCase() === q);
+                            if (exact) {
+                                filtered.value = opts.slice(0, 150);
+                            } else {
+                                filtered.value = opts
+                                    .filter((o) => o.toLowerCase().includes(q))
+                                    .slice(0, 150);
+                            }
                         }
                     },
                     { immediate: true, flush: 'post' },
@@ -823,6 +1058,40 @@
             };
         }
 
+        let globalFirstRequirementByDep = new Map();
+
+        function resetGlobalRequirementDedup() {
+            globalFirstRequirementByDep = new Map();
+        }
+
+        function pruneRequirementDedupForNodeReload(n) {
+            for (const [dep, entry] of [...globalFirstRequirementByDep.entries()]) {
+                if (entry.firstSeenNodeId === n.id) {
+                    globalFirstRequirementByDep.delete(dep);
+                }
+            }
+        }
+
+        function mergeDuplicateRequirementIntoFirst(first, incoming, parentNode) {
+            if (!first._mergedParents) first._mergedParents = [];
+            const key = `${parentNode.name}@${parentNode.version}`;
+            if (first._mergedParents.includes(key)) return;
+            first._mergedParents.push(key);
+            first.raw = `${first.raw}\n${incoming.raw}`;
+            const combined = [first.specifier, incoming.specifier].filter(Boolean).join(',');
+            first.specifier = combined;
+            const simplified = simplifySpecifierIntersection(combined);
+            first.specifierEffective = simplified !== null ? simplified : combined;
+            first.extrasFromReq = uniqueStrings([...first.extrasFromReq, ...incoming.extrasFromReq]);
+            const cur = (first.childVersion || '').trim();
+            if (cur) {
+                const ok = filterVersionsBySpec([cur], first.specifierEffective || '').length === 1;
+                if (!ok) first.childVersion = '';
+            }
+            first.versionsFetched = false;
+            first.versions = [];
+        }
+
         async function loadDepsIntoNode(n) {
             const rid = `${n.name}@${n.version}`;
             const tAll = performance.now();
@@ -830,6 +1099,7 @@
             n.fetchError = null;
             n.loading = true;
             try {
+                pruneRequirementDedupForNodeReload(n);
                 const data = await fetchJson(
                     `https://pypi.org/pypi/${encodeURIComponent(n.name)}/${encodeURIComponent(n.version)}/json`,
                 );
@@ -849,29 +1119,68 @@
                     `${(performance.now() - tFilter).toFixed(1)}ms`,
                     'filteredLines=' + filtered.length,
                 );
-                const rows = [];
-                const tRows = performance.now();
+                const depOrder = [];
+                const depToRaws = new Map();
                 for (const raw of filtered) {
                     const { main } = splitRequirementLine(raw);
                     const depName = parseNameFromReqFirstPart(main);
                     if (!depName) continue;
-                    rows.push({
-                        raw,
+                    if (!depToRaws.has(depName)) {
+                        depToRaws.set(depName, []);
+                        depOrder.push(depName);
+                    }
+                    depToRaws.get(depName).push(raw);
+                }
+                const rows = [];
+                const tRows = performance.now();
+                for (const depName of depOrder) {
+                    const raws = depToRaws.get(depName);
+                    const specParts = [];
+                    const extrasFlat = [];
+                    for (const raw of raws) {
+                        const { main } = splitRequirementLine(raw);
+                        const s = parseSpecifierFromMain(main, depName);
+                        if (s) specParts.push(s);
+                        for (const ex of parseExtrasFromReqMain(main, depName)) extrasFlat.push(ex);
+                    }
+                    const specifier = specParts.join(',');
+                    const simplified = simplifySpecifierIntersection(specifier);
+                    const specifierEffective = simplified !== null ? simplified : specifier;
+                    const rawDisplay = raws.length === 1 ? raws[0] : raws.join('\n');
+                    const extrasFromReq = uniqueStrings([
+                        ...extrasFlat,
+                        ...inferExtrasFromRawLines(rawDisplay, depName),
+                    ]);
+                    const row = {
+                        raw: rawDisplay,
                         depName,
+                        specifier,
+                        specifierEffective,
+                        extrasFromReq,
                         versions: [],
                         versionsLoading: false,
                         versionsFetched: false,
                         childVersion: '',
-                        childExtrasList: [],
-                        childExtrasSelected: [],
-                        extrasLoading: false,
-                        _extrasTimer: null,
                         addError: '',
-                    });
+                    };
+                    const existing = globalFirstRequirementByDep.get(depName);
+                    if (existing) {
+                        mergeDuplicateRequirementIntoFirst(existing.row, row, n);
+                        await fetchAndFilterVersionsForReq(existing.row);
+                        rows.push({
+                            stub: true,
+                            depName,
+                            raw: rawDisplay,
+                        });
+                    } else {
+                        globalFirstRequirementByDep.set(depName, { row, firstSeenNodeId: n.id });
+                        rows.push(row);
+                    }
                 }
                 v2log('loadDepsIntoNode build rows', rid, `${(performance.now() - tRows).toFixed(1)}ms`, 'rows=' + rows.length);
                 n.filteredRequires = rows;
                 n.loaded = true;
+                await Promise.all(rows.filter((r) => !r.stub).map((r) => fetchAndFilterVersionsForReq(r)));
                 v2log('loadDepsIntoNode success', rid, `${(performance.now() - tAll).toFixed(1)}ms total before finally`);
             } catch (e) {
                 v2log('loadDepsIntoNode catch', rid, e);
@@ -907,10 +1216,11 @@
                 const resolvedChildVersion = (req) => (req.childVersion || '').trim();
 
                 const addChild = async (req) => {
+                    if (req.stub) return;
                     req.addError = '';
                     const ver = resolvedChildVersion(req);
                     if (!ver) return;
-                    const extras = uniqueStrings(req.childExtrasSelected);
+                    const extras = uniqueStrings(req.extrasFromReq || []);
                     const child = createEmptyNode(
                         req.depName,
                         ver,
@@ -924,39 +1234,7 @@
                 };
 
                 const ensureVersions = async (req) => {
-                    if (req.versionsFetched || req.versionsLoading) return;
-                    req.versionsLoading = true;
-                    try {
-                        req.versions = await listVersions(req.depName);
-                        req.versionsFetched = true;
-                    } catch {
-                        req.versions = [];
-                        req.versionsFetched = true;
-                    } finally {
-                        req.versionsLoading = false;
-                    }
-                };
-
-                const onChildVersionInput = (req) => {
-                    if (req._extrasTimer) clearTimeout(req._extrasTimer);
-                    req._extrasTimer = setTimeout(async () => {
-                        req._extrasTimer = null;
-                        const ver = resolvedChildVersion(req);
-                        if (!ver || !req.depName) {
-                            req.childExtrasList = [];
-                            req.childExtrasSelected = [];
-                            return;
-                        }
-                        req.extrasLoading = true;
-                        try {
-                            req.childExtrasList = await fetchExtrasFor(req.depName, ver);
-                            req.childExtrasSelected = [];
-                        } catch {
-                            req.childExtrasList = [];
-                        } finally {
-                            req.extrasLoading = false;
-                        }
-                    }, 400);
+                    await fetchAndFilterVersionsForReq(req);
                 };
 
                 return {
@@ -965,7 +1243,6 @@
                     addChild,
                     ensureVersions,
                     resolvedChildVersion,
-                    onChildVersionInput,
                 };
             },
         };
@@ -1080,6 +1357,7 @@
                 const loadRoot = async () => {
                     const t0 = performance.now();
                     v2log('loadRoot');
+                    resetGlobalRequirementDedup();
                     rootError.value = '';
                     const name = rootName.value.trim().toLowerCase();
                     const version = rootVersion.value.trim();
