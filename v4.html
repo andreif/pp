@@ -37,21 +37,114 @@
 
             <div class="rounded-lg border border-slate-700/80 bg-slate-900/40 p-4 mb-6 max-w-3xl space-y-4">
                 <h2 class="text-lg font-semibold text-sky-200">Lockfile</h2>
-                <label
-                    class="flex flex-col gap-2 cursor-pointer rounded-md border border-dashed border-slate-600/60 bg-slate-950/30 p-4 transition-colors hover:border-sky-500/50"
-                    :class="dragOver ? 'border-teal-500/70 bg-slate-800/50' : ''"
-                    @dragover.prevent="dragOver = true"
-                    @dragleave.prevent="dragOver = false"
-                    @drop.prevent="onDrop"
+                <div
+                    role="tablist"
+                    aria-label="How to load lockfile"
+                    class="flex gap-1 rounded-lg border border-slate-700/60 bg-slate-950/50 p-1"
                 >
-                    <span class="text-xs text-gray-500">Choose or drop <span class="font-mono">uv.lock</span></span>
+                    <button
+                        type="button"
+                        role="tab"
+                        :aria-selected="lockInputTab === 'file'"
+                        class="flex-1 rounded-md px-3 py-1.5 text-sm transition-colors"
+                        :class="
+                            lockInputTab === 'file'
+                                ? 'bg-sky-900/55 text-sky-100 shadow-sm'
+                                : 'text-gray-500 hover:bg-slate-800/60 hover:text-gray-300'
+                        "
+                        @click="lockInputTab = 'file'"
+                    >
+                        File
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        :aria-selected="lockInputTab === 'paste'"
+                        class="flex-1 rounded-md px-3 py-1.5 text-sm transition-colors"
+                        :class="
+                            lockInputTab === 'paste'
+                                ? 'bg-sky-900/55 text-sky-100 shadow-sm'
+                                : 'text-gray-500 hover:bg-slate-800/60 hover:text-gray-300'
+                        "
+                        @click="lockInputTab = 'paste'"
+                    >
+                        Paste
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        :aria-selected="lockInputTab === 'url'"
+                        class="flex-1 rounded-md px-3 py-1.5 text-sm transition-colors"
+                        :class="
+                            lockInputTab === 'url'
+                                ? 'bg-sky-900/55 text-sky-100 shadow-sm'
+                                : 'text-gray-500 hover:bg-slate-800/60 hover:text-gray-300'
+                        "
+                        @click="lockInputTab = 'url'"
+                    >
+                        URL
+                    </button>
+                </div>
+                <div v-show="lockInputTab === 'file'" role="tabpanel">
+                    <label
+                        class="flex flex-col gap-2 cursor-pointer rounded-md border border-dashed border-slate-600/60 bg-slate-950/30 p-4 transition-colors hover:border-sky-500/50"
+                        :class="dragOver ? 'border-teal-500/70 bg-slate-800/50' : ''"
+                        @dragover.prevent="dragOver = true"
+                        @dragleave.prevent="dragOver = false"
+                        @drop.prevent="onDrop"
+                    >
+                        <span class="text-xs text-gray-500">Choose or drop <span class="font-mono">uv.lock</span></span>
+                        <input
+                            type="file"
+                            accept=".lock,text/plain"
+                            class="text-sm file:mr-3 file:rounded-md file:border-0 file:bg-sky-700 file:px-3 file:py-1.5 file:text-sm file:text-white hover:file:bg-sky-600"
+                            @change="onFile"
+                        />
+                    </label>
+                </div>
+                <div v-show="lockInputTab === 'paste'" role="tabpanel" class="space-y-2">
+                    <p class="text-xs text-gray-500">
+                        Paste <span class="font-mono">uv.lock</span> contents, then parse:
+                    </p>
+                    <textarea
+                        v-model="lockPasteText"
+                        rows="10"
+                        spellcheck="false"
+                        placeholder="Paste uv.lock here, then click Parse pasted."
+                        class="w-full rounded-md border border-slate-600/60 bg-slate-950/50 px-3 py-2 font-mono text-xs text-gray-200 placeholder:text-gray-600 focus:border-sky-500/50 focus:outline-none focus:ring-1 focus:ring-sky-500/30"
+                    ></textarea>
+                    <button
+                        type="button"
+                        class="rounded-md border border-slate-600 bg-slate-800/80 px-3 py-1.5 text-sm text-sky-200 hover:bg-slate-700/80"
+                        @click="parsePastedLock"
+                    >
+                        Parse pasted
+                    </button>
+                </div>
+                <div v-show="lockInputTab === 'url'" role="tabpanel" class="space-y-2">
+                    <p class="text-xs text-gray-500">
+                        Fetch raw <span class="font-mono">uv.lock</span> over HTTPS (or HTTP). The host must send
+                        <span class="font-mono">Access-Control-Allow-Origin</span> for this page, or the browser will block the request.
+                    </p>
                     <input
-                        type="file"
-                        accept=".lock,text/plain"
-                        class="text-sm file:mr-3 file:rounded-md file:border-0 file:bg-sky-700 file:px-3 file:py-1.5 file:text-sm file:text-white hover:file:bg-sky-600"
-                        @change="onFile"
+                        v-model="lockUrlInput"
+                        type="url"
+                        inputmode="url"
+                        autocomplete="off"
+                        spellcheck="false"
+                        placeholder="https://example.com/raw/uv.lock"
+                        class="w-full rounded-md border border-slate-600/60 bg-slate-950/50 px-3 py-2 font-mono text-xs text-gray-200 placeholder:text-gray-600 focus:border-sky-500/50 focus:outline-none focus:ring-1 focus:ring-sky-500/30"
+                        @keydown.enter.prevent="fetchLockFromUrl"
                     />
-                </label>
+                    <button
+                        type="button"
+                        class="rounded-md border border-slate-600 bg-slate-800/80 px-3 py-1.5 text-sm text-sky-200 hover:bg-slate-700/80 disabled:cursor-not-allowed disabled:opacity-50"
+                        :disabled="urlFetchLoading"
+                        @click="fetchLockFromUrl"
+                    >
+                        {{ urlFetchLoading ? 'Loading…' : 'Load from URL' }}
+                    </button>
+                </div>
                 <p v-if="fileLabel" class="text-xs font-mono text-sky-200/90">{{ fileLabel }}</p>
                 <p v-if="parseError" class="text-sm text-amber-400">{{ parseError }}</p>
                 <div v-if="metaLine" class="text-xs text-gray-500 font-mono space-y-1">
@@ -971,6 +1064,10 @@
                 const roots = Vue.ref([]);
                 const packageList = Vue.ref([]);
                 const dragOver = Vue.ref(false);
+                const lockInputTab = Vue.ref('file');
+                const lockPasteText = Vue.ref('');
+                const lockUrlInput = Vue.ref('');
+                const urlFetchLoading = Vue.ref(false);
                 const globalPythonSelected = Vue.ref('');
                 const globalPlatformSelected = Vue.ref('');
                 const globalPlatformMachineSelected = Vue.ref('');
@@ -1101,6 +1198,60 @@
                     };
                     reader.readAsText(f, 'utf-8');
                 };
+
+                function parsePastedLock() {
+                    const t = lockPasteText.value.trim();
+                    if (!t) return;
+                    applyLockText(t, 'uv.lock (pasted)');
+                }
+
+                function resetLockUiState() {
+                    parseError.value = '';
+                    roots.value = [];
+                    packageList.value = [];
+                    metaLines.value = [];
+                    parsed.value = false;
+                    manifestConstraints.value = null;
+                    metadataSpecByParent.value = null;
+                    vulnMaxScoreByPkgId.value = {};
+                    vulnIdsByPkgId.value = {};
+                    osvScanError.value = '';
+                    osvScanning.value = false;
+                    fileLabel.value = '';
+                }
+
+                async function fetchLockFromUrl() {
+                    const raw = lockUrlInput.value.trim();
+                    if (!raw || urlFetchLoading.value) return;
+                    let u;
+                    try {
+                        u = new URL(raw);
+                    } catch {
+                        resetLockUiState();
+                        parseError.value = 'Invalid URL.';
+                        return;
+                    }
+                    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+                        resetLockUiState();
+                        parseError.value = 'Only http and https URLs are allowed.';
+                        return;
+                    }
+                    urlFetchLoading.value = true;
+                    parseError.value = '';
+                    try {
+                        const res = await fetch(u.href, { method: 'GET', credentials: 'omit' });
+                        if (!res.ok) {
+                            throw new Error(`HTTP ${res.status}`);
+                        }
+                        const text = await res.text();
+                        applyLockText(text, u.href);
+                    } catch (err) {
+                        resetLockUiState();
+                        parseError.value = err.message || String(err);
+                    } finally {
+                        urlFetchLoading.value = false;
+                    }
+                }
 
                 let zoomBehavior = null;
                 let fitFn = null;
@@ -1588,6 +1739,12 @@
                     onFile,
                     onDrop,
                     dragOver,
+                    lockInputTab,
+                    lockPasteText,
+                    lockUrlInput,
+                    urlFetchLoading,
+                    parsePastedLock,
+                    fetchLockFromUrl,
                     graphHost,
                     graphNodeCount,
                     graphStats,
